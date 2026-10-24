@@ -1,0 +1,6 @@
+{
+  "name": "ApexTrade NASDAQ Terminal",
+  "description": "High-performance real-time NASDAQ stock charting and scanner terminal with multi-timeframe candles, technical indicators, volume profile, and live tick streaming.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

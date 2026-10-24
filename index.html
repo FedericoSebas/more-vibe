@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ApexTrade NASDAQ Terminal</title>
+    <meta name="description" content="High-performance real-time NASDAQ stock charting and scanner terminal with multi-timeframe candles, technical indicators, volume profile, and live tick streaming." />
+    <meta property="og:title" content="ApexTrade NASDAQ Terminal" />
+    <meta property="og:description" content="High-performance real-time NASDAQ stock charting and scanner terminal with multi-timeframe candles, technical indicators, volume profile, and live tick streaming." />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+      // Intercept and suppress external browser extension errors (e.g. MetaMask, inpage.js)
+      (function() {
+        function isExtensionErr(msg, file, stack) {
+          var s = String(msg || '') + ' ' + String(file || '') + ' ' + String(stack || '');
+          return s.indexOf('MetaMask') !== -1 ||
+                 s.indexOf('inpage.js') !== -1 ||
+                 s.indexOf('chrome-extension://') !== -1 ||
+                 s.indexOf('moz-extension://') !== -1;
+        }
+
+        window.addEventListener('error', function(e) {
+          if (isExtensionErr(e.message, e.filename, e.error && e.error.stack)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            return true;
+          }
+        }, true);
+
+        window.addEventListener('unhandledrejection', function(e) {
+          var reason = e.reason;
+          if (reason && isExtensionErr(reason.message || reason, '', reason.stack)) {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+  </head>
+  <body class="bg-[#0b0e14] text-slate-200 select-none antialiased overflow-hidden font-['Plus_Jakarta_Sans',sans-serif]">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>
+
