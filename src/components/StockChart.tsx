@@ -1,5 +1,10 @@
 import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react';
 import { 
+  Trash2, 
+  GripVertical, 
+  X 
+} from 'lucide-react';
+import { 
   Candle, 
   StockQuote, 
   DrawingTool, 
@@ -16,6 +21,7 @@ import {
   calculateVolumeProfile,
   formatCompactVolume 
 } from '../utils/stockData';
+import { soundManager } from '../utils/sound';
 
 interface StockChartProps {
   candles: Candle[];
@@ -26,6 +32,8 @@ interface StockChartProps {
   magnetMode: boolean;
   drawings: DrawnObject[];
   onAddDrawing: (drawing: DrawnObject) => void;
+  onUpdateDrawing?: (drawing: DrawnObject) => void;
+  onDeleteDrawing?: (id: string) => void;
   zoomLevel: number;
   onZoomChange: (zoom: number) => void;
   timeframe: Timeframe;
@@ -34,7 +42,60 @@ interface StockChartProps {
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
 }
 
-type DragMode = 'none' | 'pan-chart' | 'scale-price' | 'scale-time';
+type DragMode = 'none' | 'pan-chart' | 'scale-price' | 'scale-time' | 'drag-drawing';
+
+// ICT / Smart Money Concept Fibonacci Retracement Levels requested: 50, 62, 70.5, 78.8, 88.6, 110
+export const FIB_LEVELS = [
+  { ratio: 0.50, label: '50.0%', pct: '50%', color: '#38bdf8' },
+  { ratio: 0.62, label: '62.0%', pct: '62%', color: '#fbbf24' },
+  { ratio: 0.705, label: '70.5%', pct: '70.5%', color: '#f97316' }, // Key OTE (Optimal Trade Entry)
+  { ratio: 0.788, label: '78.8%', pct: '78.8%', color: '#f43f5e' },
+  { ratio: 0.886, label: '88.6%', pct: '88.6%', color: '#c084fc' },
+  { ratio: 1.10, label: '110.0%', pct: '110%', color: '#ef4444' }, // Sweep / Stop Hunt Extension
+] as const;
+
+// Geometric distance from point (px, py) to line segment (x1, y1) -> (x2, y2)
+function distToSegment(px: number, py: number, x1: number, y1: number, x2: number, y2: number): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const l2 = dx * dx + dy * dy;
+  if (l2 === 0) return Math.hypot(px - x1, py - y1);
+  let t = ((px - x1) * dx + (py - y1) * dy) / l2;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+// Find closest candle index in sorted candles array by timestamp
+function findCandleIndexByTime(candleList: Candle[], targetTime: number): number {
+  if (!candleList || candleList.length === 0) return 0;
+  // If targetTime is a legacy small index (< 1,000,000)
+  if (targetTime < 1000000) {
+    return Math.min(candleList.length - 1, Math.max(0, Math.round(targetTime)));
+  }
+
+  let low = 0;
+  let high = candleList.length - 1;
+  let closest = 0;
+  let minDiff = Infinity;
+
+  while (low <= high) {
+    const mid = (low + high) >> 1;
+    const diff = Math.abs(candleList[mid].time - targetTime);
+    if (diff < minDiff) {
+      minDiff = diff;
+      closest = mid;
+    }
+    if (candleList[mid].time === targetTime) {
+      return mid;
+    }
+    if (candleList[mid].time < targetTime) {
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return closest;
+}
 
 export const StockChart: React.FC<StockChartProps> = ({
   candles,
@@ -45,6 +106,8 @@ export const StockChart: React.FC<StockChartProps> = ({
   magnetMode,
   drawings,
   onAddDrawing,
+  onUpdateDrawing,
+  onDeleteDrawing,
   zoomLevel,
   onZoomChange,
   timeframe,
@@ -80,6 +143,12 @@ export const StockChart: React.FC<StockChartProps> = ({
   const [startPriceScale, setStartPriceScale] = useState<number>(1.0);
   const [startZoom, setStartZoom] = useState<number>(1.0);
 
+  // Drawing selection and drag states
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
+  const [hoveredDrawingId, setHoveredDrawingId] = useState<string | null>(null);
+  const [draggingDrawingId, setDraggingDrawingId] = useState<string | null>(null);
+  const [draggingPointIndex, setDraggingPointIndex] = useState<number>(0);
+
   // Mouse / Crosshair state
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
   const [cursorStyle, setCursorStyle] = useState<string>('crosshair');
@@ -109,6 +178,167 @@ export const StockChart: React.FC<StockChartProps> = ({
   const endIndex = Math.min(totalCandles, startIndex + defaultVisibleBars);
 
   const visibleCandles = useMemo(() => candles.slice(startIndex, endIndex), [candles, startIndex, endIndex]);
+
+  // Natural price min, max and buffered range
+  const priceBounds = useMemo(() => {
+    let minPrice = Infinity;
+    let maxPrice = -Infinity;
+    for (const c of visibleCandles) {
+      if (c.low < minPrice) minPrice = c.low;
+      if (c.high > maxPrice) maxPrice = c.high;
+    }
+    if (minPrice === maxPrice || minPrice === Infinity) {
+      minPrice = stock.price * 0.95;
+      maxPrice = stock.price * 1.05;
+    }
+    const rawRange = Math.max(0.02, maxPrice - minPrice);
+    const naturalCenter = (minPrice + maxPrice) / 2;
+    const effectiveCenter = naturalCenter + verticalPanOffset;
+    const halfSpan = (rawRange * 0.56) * priceScaleFactor;
+    const bufferedMin = Math.max(0.01, effectiveCenter - halfSpan);
+    const bufferedMax = effectiveCenter + halfSpan;
+    const bufferedRange = bufferedMax - bufferedMin;
+    return { bufferedMin, bufferedMax, bufferedRange };
+  }, [visibleCandles, stock.price, verticalPanOffset, priceScaleFactor]);
+
+  // Screen coordinate to price and vice-versa
+  const priceToY = useCallback((price: number, containerHeight?: number) => {
+    const h = containerHeight || containerRef.current?.getBoundingClientRect().height || 400;
+    const plotHeight = h - bottomAxisHeight;
+    const pricePlotHeight = plotHeight - (plotHeight * 0.16);
+    return pricePlotHeight - ((price - priceBounds.bufferedMin) / priceBounds.bufferedRange) * pricePlotHeight;
+  }, [priceBounds, bottomAxisHeight]);
+
+  const yToPrice = useCallback((y: number, containerHeight?: number) => {
+    const h = containerHeight || containerRef.current?.getBoundingClientRect().height || 400;
+    const plotHeight = h - bottomAxisHeight;
+    const pricePlotHeight = plotHeight - (plotHeight * 0.16);
+    return priceBounds.bufferedMax - (y / pricePlotHeight) * priceBounds.bufferedRange;
+  }, [priceBounds, bottomAxisHeight]);
+
+  // Screen coordinate X from candle timestamp, perfectly invariant across zoom, pan, stretch, and window resize
+  const timeToX = useCallback((pointTime: number, containerWidth?: number): number => {
+    if (!candles || candles.length === 0) return 0;
+    const w = containerWidth || containerRef.current?.getBoundingClientRect().width || 800;
+    const plotW = w - rightAxisWidth;
+    const numVisible = visibleCandles.length || 1;
+    const candleW = plotW / numVisible;
+
+    // Handle legacy points saved with local visible index (< 1,000,000)
+    if (pointTime < 1000000) {
+      return pointTime * candleW + candleW / 2;
+    }
+
+    const closestIdx = findCandleIndexByTime(candles, pointTime);
+    let fractionalIdx = closestIdx;
+
+    if (closestIdx < candles.length - 1 && pointTime > candles[closestIdx].time) {
+      const nextTime = candles[closestIdx + 1].time;
+      if (nextTime > candles[closestIdx].time) {
+        const frac = (pointTime - candles[closestIdx].time) / (nextTime - candles[closestIdx].time);
+        fractionalIdx = closestIdx + Math.min(1, Math.max(0, frac));
+      }
+    } else if (closestIdx > 0 && pointTime < candles[closestIdx].time) {
+      const prevTime = candles[closestIdx - 1].time;
+      if (candles[closestIdx].time > prevTime) {
+        const frac = (pointTime - prevTime) / (candles[closestIdx].time - prevTime);
+        fractionalIdx = (closestIdx - 1) + Math.min(1, Math.max(0, frac));
+      }
+    }
+
+    // Offset relative to the visible window startIndex
+    const visibleIdx = fractionalIdx - startIndex;
+    return visibleIdx * candleW + candleW / 2;
+  }, [candles, visibleCandles.length, startIndex, rightAxisWidth]);
+
+  // Helper to find any drawing (horizontal line, fibonacci level or anchor, trendline) near mouse (x, y)
+  const findDrawingNearPos = useCallback((x: number, y: number, tolerance = 8): DrawnObject | null => {
+    let closest: DrawnObject | null = null;
+    let minDiff = tolerance;
+
+    for (const d of drawings) {
+      if (d.type === 'horizontal' && d.points.length > 0) {
+        const lineY = priceToY(d.points[0].price);
+        const diff = Math.abs(y - lineY);
+        if (diff < minDiff) {
+          minDiff = diff;
+          closest = d;
+        }
+      } else if (d.type === 'fibonacci' && d.points.length >= 2) {
+        const p1 = d.points[0];
+        const p2 = d.points[1];
+        const x1 = timeToX(p1.time);
+        const y1 = priceToY(p1.price);
+        const x2 = timeToX(p2.time);
+        const y2 = priceToY(p2.price);
+
+        // Check if cursor is right on Anchor 1 or Anchor 2
+        const distAnchor1 = Math.hypot(x - x1, y - y1);
+        const distAnchor2 = Math.hypot(x - x2, y - y2);
+        if (distAnchor1 <= 14 || distAnchor2 <= 14) {
+          return d;
+        }
+
+        // Check near dashed anchor connection line
+        const distTrend = distToSegment(x, y, x1, y1, x2, y2);
+        if (distTrend < minDiff) {
+          minDiff = distTrend;
+          closest = d;
+        }
+
+        // Check near any of the 6 Fibonacci levels
+        for (const lvl of FIB_LEVELS) {
+          const fibPrice = p2.price - lvl.ratio * (p2.price - p1.price);
+          const fibY = priceToY(fibPrice);
+          const diff = Math.abs(y - fibY);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = d;
+          }
+        }
+      } else if (d.type === 'trendline' && d.points.length >= 2) {
+        const p1 = d.points[0];
+        const p2 = d.points[1];
+        const x1 = timeToX(p1.time);
+        const y1 = priceToY(p1.price);
+        const x2 = timeToX(p2.time);
+        const y2 = priceToY(p2.price);
+        const distTrend = distToSegment(x, y, x1, y1, x2, y2);
+        if (distTrend < minDiff) {
+          minDiff = distTrend;
+          closest = d;
+        }
+      }
+    }
+    return closest;
+  }, [drawings, priceToY, timeToX]);
+
+  // Keep findHorizontalLineNearY for compatibility
+  const findHorizontalLineNearY = useCallback((y: number, tolerance = 8): DrawnObject | null => {
+    return findDrawingNearPos(0, y, tolerance);
+  }, [findDrawingNearPos]);
+
+  // Keyboard shortcut: Delete or Backspace to delete selected drawing, Escape to deselect
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selectedDrawingId) {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+          return;
+        }
+        e.preventDefault();
+        if (onDeleteDrawing) {
+          onDeleteDrawing(selectedDrawingId);
+        }
+        setSelectedDrawingId(null);
+        soundManager.playSelect();
+      } else if (e.key === 'Escape') {
+        setSelectedDrawingId(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedDrawingId, onDeleteDrawing]);
 
   // Reset to Auto-Scale
   const handleResetAutoScale = useCallback(() => {
@@ -321,7 +551,7 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     let lastRenderedX = -999;
-    const isIntraday = visibleCandles.length > 0 && visibleCandles[0].timeStr && visibleCandles[0].timeStr.includes(':');
+    const isIntraday = visibleCandles.length > 0 && (timeframe !== 'D');
 
     if (isIntraday) {
       let prevHour = -1;
@@ -330,10 +560,10 @@ export const StockChart: React.FC<StockChartProps> = ({
       for (let i = 0; i < visibleCandles.length; i++) {
         const c = visibleCandles[i];
         const x = indexToX(i);
-        const [hStr, mStr] = c.timeStr.split(':');
-        const hour = parseInt(hStr, 10);
-        const min = parseInt(mStr, 10);
+        const timeMatch = c.timeStr ? c.timeStr.match(/(\d{1,2}):(\d{2})/) : null;
         const dObj = new Date(c.time);
+        const hour = timeMatch ? parseInt(timeMatch[1], 10) : dObj.getHours();
+        const min = timeMatch ? parseInt(timeMatch[2], 10) : dObj.getMinutes();
         const day = dObj.getDate();
 
         // Check if this bar is an hour tick or day transition
@@ -600,9 +830,9 @@ export const StockChart: React.FC<StockChartProps> = ({
       if (d.type === 'trendline' && d.points.length >= 2) {
         const p1 = d.points[0];
         const p2 = d.points[1];
-        const x1 = indexToX(p1.time);
+        const x1 = timeToX(p1.time, width);
         const y1 = priceToY(p1.price);
-        const x2 = indexToX(p2.time);
+        const x2 = timeToX(p2.time, width);
         const y2 = priceToY(p2.price);
 
         ctx.beginPath();
@@ -616,50 +846,165 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.fill();
       } else if (d.type === 'horizontal' && d.points.length >= 1) {
         const y = priceToY(d.points[0].price);
+        const isHovered = hoveredDrawingId === d.id;
+        const isSelected = selectedDrawingId === d.id;
+
+        // Draw halo / glow if hovered or selected
+        if (isSelected || isHovered) {
+          ctx.beginPath();
+          ctx.strokeStyle = isSelected ? 'rgba(56, 189, 248, 0.4)' : 'rgba(56, 189, 248, 0.2)';
+          ctx.lineWidth = 8;
+          ctx.moveTo(0, y);
+          ctx.lineTo(plotWidth, y);
+          ctx.stroke();
+        }
+
+        // Draw horizontal line
         ctx.beginPath();
-        ctx.setLineDash([4, 2]);
+        ctx.strokeStyle = isSelected ? '#38bdf8' : (isHovered ? '#7dd3fc' : d.color);
+        ctx.lineWidth = isSelected || isHovered ? 2 : 1.5;
+        ctx.setLineDash(isSelected ? [] : [4, 2]);
         ctx.moveTo(0, y);
         ctx.lineTo(plotWidth, y);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        ctx.fillStyle = d.color;
-        ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.fillText(`L: ${d.points[0].price.toFixed(2)}`, 10, y - 4);
+        // If selected, draw 3 circular handles on the line
+        if (isSelected) {
+          const handles = [28, plotWidth / 2, plotWidth - 28];
+          for (const hx of handles) {
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = '#38bdf8';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.arc(hx, y, 4, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+
+        // Left label: L: price with 4 decimals
+        ctx.fillStyle = isSelected ? '#38bdf8' : d.color;
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.fillText(`L: ${d.points[0].price.toFixed(4)}`, 10, y - 5);
+
+        // Price Tag badge on right Y-axis
+        if (y >= 0 && y <= plotHeight) {
+          ctx.fillStyle = isSelected ? '#0284c7' : '#1e293b';
+          ctx.fillRect(plotWidth, y - 8, rightAxisWidth, 16);
+          ctx.strokeStyle = isSelected ? '#38bdf8' : d.color;
+          ctx.lineWidth = 1;
+          ctx.strokeRect(plotWidth, y - 8, rightAxisWidth, 16);
+          ctx.fillStyle = isSelected ? '#ffffff' : '#94a3b8';
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(d.points[0].price.toFixed(4), plotWidth + rightAxisWidth / 2, y);
+        }
       } else if (d.type === 'fibonacci' && d.points.length >= 2) {
         const p1 = d.points[0];
         const p2 = d.points[1];
-        const highP = Math.max(p1.price, p2.price);
-        const lowP = Math.min(p1.price, p2.price);
-        const diff = highP - lowP;
+        const isSelected = selectedDrawingId === d.id;
+        const isHovered = hoveredDrawingId === d.id;
 
-        const fibRatios = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0];
-        fibRatios.forEach(r => {
-          const fibPrice = lowP + diff * r;
-          const fibY = priceToY(fibPrice);
+        const x1 = timeToX(p1.time, width);
+        const y1 = priceToY(p1.price);
+        const x2 = timeToX(p2.time, width);
+        const y2 = priceToY(p2.price);
+
+        // 1. Draw Anchor Connection Trendline between the two user points
+        ctx.beginPath();
+        ctx.strokeStyle = isSelected ? '#38bdf8' : (isHovered ? '#7dd3fc' : 'rgba(148, 163, 184, 0.45)');
+        ctx.lineWidth = isSelected || isHovered ? 1.5 : 1;
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Anchor Circles with distinct handles when selected
+        [ { x: x1, y: y1 }, { x: x2, y: y2 } ].forEach((pt) => {
+          ctx.fillStyle = isSelected ? '#38bdf8' : '#0f172a';
+          ctx.strokeStyle = '#38bdf8';
+          ctx.lineWidth = isSelected ? 2 : 1.5;
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(56, 189, 248, ${r === 0.5 || r === 0.618 ? 0.8 : 0.4})`;
-          ctx.setLineDash([3, 3]);
-          ctx.moveTo(0, fibY);
-          ctx.lineTo(plotWidth, fibY);
+          ctx.arc(pt.x, pt.y, isSelected ? 5 : 4, 0, Math.PI * 2);
+          ctx.fill();
           ctx.stroke();
-          ctx.setLineDash([]);
 
-          ctx.fillStyle = '#38bdf8';
-          ctx.font = '9px "JetBrains Mono", monospace';
-          ctx.fillText(`${(r * 100).toFixed(1)}% ($${fibPrice.toFixed(2)})`, plotWidth - 110, fibY - 3);
+          if (isSelected) {
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+
+        // Direction:
+        // Mark low then high (p1.price < p2.price) -> downside retracement (pullback moving down from p2)
+        // Mark high then low (p1.price > p2.price) -> upside retracement (pullback moving up from p2)
+        // Formula: fibPrice = p2.price - ratio * (p2.price - p1.price)
+
+        // 2. OTE Zone fill between 62% and 78.8%
+        const price62 = p2.price - 0.62 * (p2.price - p1.price);
+        const price788 = p2.price - 0.788 * (p2.price - p1.price);
+        const y62 = priceToY(price62);
+        const y788 = priceToY(price788);
+        const zoneTop = Math.min(y62, y788);
+        const zoneHeight = Math.abs(y788 - y62);
+        if (zoneTop < plotHeight && zoneTop + zoneHeight > 0) {
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.08)';
+          ctx.fillRect(0, zoneTop, plotWidth, zoneHeight);
+        }
+
+        // 3. Render ONLY the requested percentages: 50, 62, 70.5, 78.8, 88.6, 110
+        FIB_LEVELS.forEach(lvl => {
+          const fibPrice = p2.price - lvl.ratio * (p2.price - p1.price);
+          const fibY = priceToY(fibPrice);
+
+          if (fibY >= -30 && fibY <= plotHeight + 30) {
+            ctx.beginPath();
+            ctx.strokeStyle = lvl.color;
+            ctx.lineWidth = isSelected ? 1.6 : (lvl.ratio === 0.705 || lvl.ratio === 0.50 ? 1.4 : 1.0);
+            ctx.setLineDash(lvl.ratio === 0.705 ? [] : (lvl.ratio === 0.50 ? [6, 3] : [3, 3]));
+            ctx.moveTo(0, fibY);
+            ctx.lineTo(plotWidth, fibY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Right-aligned level badge
+            const badgeText = `${lvl.label} ($${fibPrice.toFixed(2)})`;
+            ctx.font = 'bold 9px "JetBrains Mono", monospace';
+            const textWidth = ctx.measureText(badgeText).width;
+            const badgeW = textWidth + 12;
+            const badgeH = 15;
+            const badgeX = plotWidth - badgeW - 6;
+
+            ctx.fillStyle = 'rgba(10, 15, 26, 0.9)';
+            ctx.fillRect(badgeX, fibY - badgeH / 2, badgeW, badgeH);
+            ctx.strokeStyle = lvl.color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(badgeX, fibY - badgeH / 2, badgeW, badgeH);
+
+            ctx.fillStyle = lvl.color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(badgeText, badgeX + badgeW / 2, fibY);
+          }
         });
       } else if (d.type === 'ruler' && d.points.length >= 2) {
         const p1 = d.points[0];
         const p2 = d.points[1];
-        const x1 = indexToX(p1.time);
+        const x1 = timeToX(p1.time, width);
         const y1 = priceToY(p1.price);
-        const x2 = indexToX(p2.time);
+        const x2 = timeToX(p2.time, width);
         const y2 = priceToY(p2.price);
 
         const deltaPrice = p2.price - p1.price;
         const deltaPct = (deltaPrice / p1.price) * 100;
-        const barsCount = Math.abs(p2.time - p1.time);
+        const idx1 = findCandleIndexByTime(candles, p1.time);
+        const idx2 = findCandleIndexByTime(candles, p2.time);
+        const barsCount = Math.abs(idx2 - idx1);
 
         ctx.fillStyle = deltaPrice >= 0 ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)';
         ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
@@ -673,6 +1018,121 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.font = '10px "JetBrains Mono", monospace';
         ctx.fillText(`${deltaPrice >= 0 ? '+' : ''}${deltaPrice.toFixed(4)} (${deltaPct.toFixed(2)}%)`, x2 + 8, y2 - 2);
         ctx.fillText(`${barsCount} bars`, x2 + 8, y2 + 10);
+      }
+    }
+
+    // 10b. Draw in-progress preview for multi-point tools (Fibonacci, Trendline, Ruler)
+    if (currentDrawingPoints.length === 1 && hoverPos && hoverPos.x < plotWidth && hoverPos.y < plotHeight) {
+      const p1 = currentDrawingPoints[0];
+      const candleWidth = plotWidth / (visibleCandles.length || 1);
+      const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)));
+      const targetCandle = visibleCandles[candleIdx];
+      let targetPrice = yToPrice(hoverPos.y);
+
+      if (magnetMode && targetCandle) {
+        const candidates = [targetCandle.high, targetCandle.low, targetCandle.open, targetCandle.close];
+        let closest = candidates[0];
+        let minDiff = Math.abs(targetPrice - candidates[0]);
+        for (const c of candidates) {
+          const diff = Math.abs(targetPrice - c);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = c;
+          }
+        }
+        targetPrice = closest;
+      }
+
+      const p2Price = Math.round(targetPrice * 10000) / 10000;
+      const x1 = timeToX(p1.time, width);
+      const y1 = priceToY(p1.price);
+      const x2 = magnetMode && targetCandle ? timeToX(targetCandle.time, width) : hoverPos.x;
+      const y2 = priceToY(p2Price);
+
+      if (activeTool === 'fibonacci') {
+        // Connecting anchor line preview
+        ctx.beginPath();
+        ctx.strokeStyle = '#38bdf8';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Anchor dots
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+        ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Direction HUD Banner at cursor
+        const isDownside = p1.price < p2Price;
+        const bannerText = isDownside ? '▼ Downside Retracement' : '▲ Upside Retracement';
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        const bWidth = ctx.measureText(bannerText).width + 12;
+        ctx.fillStyle = isDownside ? 'rgba(239, 68, 68, 0.9)' : 'rgba(34, 197, 94, 0.9)';
+        ctx.fillRect(x2 + 8, y2 - 18, bWidth, 16);
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(bannerText, x2 + 8 + bWidth / 2, y2 - 10);
+
+        // OTE Zone preview
+        const price62 = p2Price - 0.62 * (p2Price - p1.price);
+        const price788 = p2Price - 0.788 * (p2Price - p1.price);
+        const y62 = priceToY(price62);
+        const y788 = priceToY(price788);
+        const zoneTop = Math.min(y62, y788);
+        const zoneHeight = Math.abs(y788 - y62);
+        if (zoneTop < plotHeight && zoneTop + zoneHeight > 0) {
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.08)';
+          ctx.fillRect(0, zoneTop, plotWidth, zoneHeight);
+        }
+
+        // Preview all 6 Fibonacci levels
+        FIB_LEVELS.forEach(lvl => {
+          const fibPrice = p2Price - lvl.ratio * (p2Price - p1.price);
+          const fibY = priceToY(fibPrice);
+          if (fibY >= -30 && fibY <= plotHeight + 30) {
+            ctx.beginPath();
+            ctx.strokeStyle = lvl.color;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.moveTo(0, fibY);
+            ctx.lineTo(plotWidth, fibY);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            const badgeText = `${lvl.label} ($${fibPrice.toFixed(2)})`;
+            ctx.font = 'bold 9px "JetBrains Mono", monospace';
+            const textWidth = ctx.measureText(badgeText).width;
+            const badgeW = textWidth + 10;
+            const badgeH = 14;
+            const badgeX = plotWidth - badgeW - 6;
+
+            ctx.fillStyle = 'rgba(10, 15, 26, 0.85)';
+            ctx.fillRect(badgeX, fibY - badgeH / 2, badgeW, badgeH);
+            ctx.strokeStyle = lvl.color;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(badgeX, fibY - badgeH / 2, badgeW, badgeH);
+
+            ctx.fillStyle = lvl.color;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(badgeText, badgeX + badgeW / 2, fibY);
+          }
+        });
+      } else if (activeTool === 'trendline') {
+        ctx.beginPath();
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([3, 3]);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
       }
     }
 
@@ -718,14 +1178,15 @@ export const StockChart: React.FC<StockChartProps> = ({
           hovered.session === 'post' ? '#2563eb' : // Blue
           hovered.session === 'overnight' ? '#9333ea' : // Purple
           '#334155';
-        const badgeW = hovered.session ? (hovered.session === 'overnight' ? 82 : 74) : 60;
+        const timeText = `${sessionPrefix}${hovered.timeStr}`;
+        ctx.font = '10px "JetBrains Mono", monospace';
+        const badgeW = Math.max(64, ctx.measureText(timeText).width + 16);
         ctx.fillStyle = badgeBg;
         ctx.fillRect(hoverPos.x - badgeW / 2, plotHeight, badgeW, 18);
         ctx.fillStyle = '#ffffff';
-        ctx.font = '10px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(`${sessionPrefix}${hovered.timeStr}`, hoverPos.x, plotHeight + 9);
+        ctx.fillText(timeText, hoverPos.x, plotHeight + 9);
       }
     }
 
@@ -1005,6 +1466,8 @@ export const StockChart: React.FC<StockChartProps> = ({
     hoverPos, 
     chartType, 
     drawings, 
+    selectedDrawingId,
+    hoveredDrawingId,
     ema9Data, 
     sma20Data, 
     sma200Data, 
@@ -1015,7 +1478,9 @@ export const StockChart: React.FC<StockChartProps> = ({
     verticalPanOffset,
     zoomLevel,
     dragMode,
-    panOffset
+    panOffset,
+    timeToX,
+    candles
   ]);
 
   // Handle Resize & Canvas Scaling via ResizeObserver
@@ -1051,6 +1516,10 @@ export const StockChart: React.FC<StockChartProps> = ({
     const plotWidth = rect.width - rightAxisWidth;
     const plotHeight = rect.height - bottomAxisHeight;
 
+    if (dragMode === 'drag-drawing') {
+      setCursorStyle('ns-resize');
+      return;
+    }
     if (dragMode === 'pan-chart') {
       setCursorStyle('grabbing');
       return;
@@ -1082,6 +1551,31 @@ export const StockChart: React.FC<StockChartProps> = ({
       return;
     }
 
+    // Check if hovering over any drawing (horizontal line, fibonacci, etc.)
+    if (x < plotWidth && y < plotHeight) {
+      const nearDrawing = findDrawingNearPos(x, y, 8);
+      if (nearDrawing) {
+        if (nearDrawing.type === 'horizontal') {
+          setCursorStyle('ns-resize');
+          return;
+        }
+        if ((nearDrawing.type === 'fibonacci' || nearDrawing.type === 'trendline') && nearDrawing.points.length >= 2) {
+          const p1 = nearDrawing.points[0];
+          const p2 = nearDrawing.points[1];
+          const x1 = timeToX(p1.time);
+          const y1 = priceToY(p1.price);
+          const x2 = timeToX(p2.time);
+          const y2 = priceToY(p2.price);
+          if (Math.hypot(x - x1, y - y1) <= 12 || Math.hypot(x - x2, y - y2) <= 12) {
+            setCursorStyle('grab');
+            return;
+          }
+        }
+        setCursorStyle('pointer');
+        return;
+      }
+    }
+
     // Main chart canvas
     if (activeTool === 'pan') {
       setCursorStyle('grab');
@@ -1092,6 +1586,9 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   // Mouse Down Event Handler
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Only primary button initiates drag/drawing
+    if (e.button !== 0) return;
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
@@ -1125,54 +1622,113 @@ export const StockChart: React.FC<StockChartProps> = ({
       return;
     }
 
-    // Drawings in progress
-    if (activeTool && activeTool !== 'crosshair' && activeTool !== 'pan') {
-      const candleWidth = plotWidth / visibleCandles.length;
-      let candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(x / candleWidth)));
-      const targetCandle = visibleCandles[candleIdx];
+    // Check click on an EXISTING drawing first!
+    if (x < plotWidth && y < plotHeight) {
+      const nearDrawing = findDrawingNearPos(x, y, 8);
+      if (nearDrawing) {
+        setSelectedDrawingId(nearDrawing.id);
+        if (nearDrawing.type === 'horizontal') {
+          setDraggingDrawingId(nearDrawing.id);
+          setDraggingPointIndex(0);
+          setDragMode('drag-drawing');
+          setDragStartPos({ x: e.clientX, y: e.clientY });
+          setCursorStyle('ns-resize');
+        } else if ((nearDrawing.type === 'fibonacci' || nearDrawing.type === 'trendline') && nearDrawing.points.length >= 2) {
+          const p1 = nearDrawing.points[0];
+          const p2 = nearDrawing.points[1];
+          const x1 = timeToX(p1.time);
+          const y1 = priceToY(p1.price);
+          const x2 = timeToX(p2.time);
+          const y2 = priceToY(p2.price);
+          const dist1 = Math.hypot(x - x1, y - y1);
+          const dist2 = Math.hypot(x - x2, y - y2);
 
-      // Calculate price from Y
-      let minP = Infinity, maxP = -Infinity;
-      for (const c of visibleCandles) {
-        if (c.low < minP) minP = c.low;
-        if (c.high > maxP) maxP = c.high;
+          if (dist1 <= 14) {
+            setDraggingDrawingId(nearDrawing.id);
+            setDraggingPointIndex(0);
+            setDragMode('drag-drawing');
+            setDragStartPos({ x: e.clientX, y: e.clientY });
+            setCursorStyle('grabbing');
+          } else if (dist2 <= 14) {
+            setDraggingDrawingId(nearDrawing.id);
+            setDraggingPointIndex(1);
+            setDragMode('drag-drawing');
+            setDragStartPos({ x: e.clientX, y: e.clientY });
+            setCursorStyle('grabbing');
+          }
+        }
+        soundManager.playSelect();
+        return;
       }
-      const rawRange = Math.max(0.02, maxP - minP);
-      const effectiveCenter = ((minP + maxP) / 2) + verticalPanOffset;
-      const halfSpan = (rawRange * 0.56) * priceScaleFactor;
-      const bMin = Math.max(0.01, effectiveCenter - halfSpan);
-      const bMax = effectiveCenter + halfSpan;
-      let targetPrice = bMax - (y / (plotHeight - plotHeight * 0.16)) * (bMax - bMin);
+    }
 
-      // Magnet snap to wick
+    // If activeTool is horizontal and clicked on empty space:
+    if (activeTool === 'horizontal') {
+      const candleWidth = plotWidth / (visibleCandles.length || 1);
+      const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(x / candleWidth)));
+      const targetCandle = visibleCandles[candleIdx];
+      let targetPrice = yToPrice(y, rect.height);
+
+      if (magnetMode && targetCandle) {
+        const candidates = [targetCandle.high, targetCandle.low, targetCandle.open, targetCandle.close];
+        let closest = candidates[0];
+        let minDiff = Math.abs(targetPrice - candidates[0]);
+        for (const cand of candidates) {
+          const diff = Math.abs(targetPrice - cand);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = cand;
+          }
+        }
+        targetPrice = closest;
+      }
+
+      const pointTime = targetCandle ? targetCandle.time : Date.now();
+      const roundedPrice = Math.round(targetPrice * 10000) / 10000;
+      const newId = `h_${Date.now()}`;
+      onAddDrawing({
+        id: newId,
+        type: 'horizontal',
+        points: [{ x, y, price: roundedPrice, time: pointTime }],
+        color: '#38bdf8'
+      });
+      setSelectedDrawingId(newId);
+      soundManager.playSelect();
+      return;
+    }
+
+    // Deselect horizontal line if clicked on empty chart area
+    if (activeTool === 'crosshair' || activeTool === 'pan' || activeTool === 'select') {
+      setSelectedDrawingId(null);
+    }
+
+    // Other drawings in progress (trendline, fibonacci, ruler, brush)
+    if (activeTool && activeTool !== 'crosshair' && activeTool !== 'pan' && activeTool !== 'select') {
+      const candleWidth = plotWidth / (visibleCandles.length || 1);
+      const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(x / candleWidth)));
+      const targetCandle = visibleCandles[candleIdx];
+      let targetPrice = yToPrice(y, rect.height);
+
       if (magnetMode && targetCandle) {
         const distHigh = Math.abs(targetPrice - targetCandle.high);
         const distLow = Math.abs(targetPrice - targetCandle.low);
         targetPrice = distHigh < distLow ? targetCandle.high : targetCandle.low;
       }
 
-      const newPoint = { x, y, price: targetPrice, time: candleIdx };
+      const pointTime = targetCandle ? targetCandle.time : Date.now();
+      const newPoint = { x, y, price: Math.round(targetPrice * 10000) / 10000, time: pointTime };
 
-      if (activeTool === 'horizontal') {
+      const nextPoints = [...currentDrawingPoints, newPoint];
+      if (nextPoints.length === 2) {
         onAddDrawing({
-          id: `h_${Date.now()}`,
-          type: 'horizontal',
-          points: [newPoint],
-          color: '#38bdf8'
+          id: `d_${Date.now()}`,
+          type: activeTool,
+          points: nextPoints,
+          color: activeTool === 'fibonacci' ? '#38bdf8' : activeTool === 'ruler' ? '#10b981' : '#f59e0b'
         });
-      } else if (activeTool === 'trendline' || activeTool === 'fibonacci' || activeTool === 'ruler') {
-        const nextPoints = [...currentDrawingPoints, newPoint];
-        if (nextPoints.length === 2) {
-          onAddDrawing({
-            id: `d_${Date.now()}`,
-            type: activeTool,
-            points: nextPoints,
-            color: activeTool === 'fibonacci' ? '#38bdf8' : activeTool === 'ruler' ? '#10b981' : '#f59e0b'
-          });
-          setCurrentDrawingPoints([]);
-        } else {
-          setCurrentDrawingPoints(nextPoints);
-        }
+        setCurrentDrawingPoints([]);
+      } else {
+        setCurrentDrawingPoints(nextPoints);
       }
       return;
     }
@@ -1199,7 +1755,7 @@ export const StockChart: React.FC<StockChartProps> = ({
     onZoomChange(Math.max(0.18, zoomLevel * 0.8));
   };
 
-  // Window-level mouse move & mouse up listeners for smooth axis dragging
+  // Window-level mouse move & mouse up listeners for smooth axis dragging and drawing dragging
   useEffect(() => {
     if (dragMode === 'none') return;
 
@@ -1207,13 +1763,76 @@ export const StockChart: React.FC<StockChartProps> = ({
     if (dragMode === 'scale-price') document.body.style.cursor = 'ns-resize';
     else if (dragMode === 'scale-time') document.body.style.cursor = 'ew-resize';
     else if (dragMode === 'pan-chart') document.body.style.cursor = 'grabbing';
+    else if (dragMode === 'drag-drawing') document.body.style.cursor = 'ns-resize';
 
     const onWindowMouseMove = (e: MouseEvent) => {
+      // 0. Dragging Horizontal Line or Fibonacci / Trendline Anchor
+      if (dragMode === 'drag-drawing' && draggingDrawingId) {
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const plotWidth = rect.width - rightAxisWidth;
+        const y = e.clientY - rect.top;
+        const x = e.clientX - rect.left;
+        let newPrice = yToPrice(y, rect.height);
+
+        const candleWidth = plotWidth / (visibleCandles.length || 1);
+        const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(x / candleWidth)));
+        const targetCandle = visibleCandles[candleIdx];
+
+        // Snap to wick if magnetMode is ON
+        if (magnetMode && targetCandle) {
+          const candidates = [targetCandle.high, targetCandle.low, targetCandle.open, targetCandle.close];
+          let closest = candidates[0];
+          let minDiff = Math.abs(newPrice - candidates[0]);
+          for (const cand of candidates) {
+            const diff = Math.abs(newPrice - cand);
+            if (diff < minDiff) {
+              minDiff = diff;
+              closest = cand;
+            }
+          }
+          const pixelDiff = Math.abs(priceToY(newPrice, rect.height) - priceToY(closest, rect.height));
+          if (pixelDiff <= 15) {
+            newPrice = closest;
+          }
+        }
+
+        const roundedPrice = Math.round(newPrice * 10000) / 10000;
+        const currentDrawing = drawings.find(d => d.id === draggingDrawingId);
+        if (currentDrawing && onUpdateDrawing) {
+          if (currentDrawing.type === 'horizontal') {
+            onUpdateDrawing({
+              ...currentDrawing,
+              points: [{
+                ...currentDrawing.points[0],
+                price: roundedPrice,
+                y: priceToY(roundedPrice, rect.height)
+              }]
+            });
+          } else if ((currentDrawing.type === 'fibonacci' || currentDrawing.type === 'trendline') && currentDrawing.points.length >= 2) {
+            const updatedPoints = [...currentDrawing.points];
+            const ptIdx = draggingPointIndex >= 0 && draggingPointIndex < updatedPoints.length ? draggingPointIndex : 0;
+            const newTime = targetCandle ? targetCandle.time : updatedPoints[ptIdx].time;
+            updatedPoints[ptIdx] = {
+              ...updatedPoints[ptIdx],
+              price: roundedPrice,
+              time: newTime,
+              x,
+              y: priceToY(roundedPrice, rect.height)
+            };
+            onUpdateDrawing({
+              ...currentDrawing,
+              points: updatedPoints
+            });
+          }
+        }
+        return;
+      }
+
       // 1. Dragging Right Price Axis: Vertical stretch/contract
       if (dragMode === 'scale-price') {
         const deltaY = e.clientY - dragStartPos.y;
-        // Drag UP (deltaY < 0): stretch price scale (factor < 1 -> priceScaleFactor gets smaller -> fewer price units per screen -> taller candles)
-        // Drag DOWN (deltaY > 0): contract price scale (factor > 1 -> priceScaleFactor gets larger -> more price units per screen -> shorter candles)
         const factor = Math.exp(deltaY * 0.0065);
         const nextScale = Math.max(0.04, Math.min(15.0, startPriceScale * factor));
         setPriceScaleFactor(nextScale);
@@ -1223,8 +1842,6 @@ export const StockChart: React.FC<StockChartProps> = ({
       // 2. Dragging Bottom Time Axis: Horizontal stretch/contract
       if (dragMode === 'scale-time') {
         const deltaX = e.clientX - dragStartPos.x;
-        // Drag RIGHT (deltaX > 0): stretch time scale (factor > 1 -> zoomLevel increases -> fewer bars -> wider candles)
-        // Drag LEFT (deltaX < 0): contract time scale (factor < 1 -> zoomLevel decreases -> more bars -> narrower candles)
         const factor = Math.exp(deltaX * 0.0055);
         const nextZoom = Math.max(0.18, Math.min(6.5, startZoom * factor));
         onZoomChange(nextZoom);
@@ -1270,6 +1887,8 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     const onWindowMouseUp = () => {
       setDragMode('none');
+      setDraggingDrawingId(null);
+      setDraggingPointIndex(0);
       document.body.style.cursor = originalCursor;
     };
 
@@ -1282,6 +1901,8 @@ export const StockChart: React.FC<StockChartProps> = ({
     };
   }, [
     dragMode,
+    draggingDrawingId,
+    draggingPointIndex,
     dragStartPos,
     startPriceScale,
     startZoom,
@@ -1293,10 +1914,15 @@ export const StockChart: React.FC<StockChartProps> = ({
     visibleCandles,
     onZoomChange,
     rightAxisWidth,
-    bottomAxisHeight
+    bottomAxisHeight,
+    drawings,
+    magnetMode,
+    priceToY,
+    yToPrice,
+    onUpdateDrawing
   ]);
 
-  // Mouse Move Event Handler for Hover Crosshair & HUD
+  // Mouse Move Event Handler for Hover Crosshair & Line Detection
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -1305,12 +1931,43 @@ export const StockChart: React.FC<StockChartProps> = ({
     const y = e.clientY - rect.top;
 
     setHoverPos({ x, y });
+
+    const plotWidth = rect.width - rightAxisWidth;
+    const plotHeight = rect.height - bottomAxisHeight;
+    if (x < plotWidth && y < plotHeight) {
+      const nearDrawing = findDrawingNearPos(x, y, 8);
+      setHoveredDrawingId(nearDrawing ? nearDrawing.id : null);
+    } else {
+      setHoveredDrawingId(null);
+    }
+
     updateCursor(x, y);
+  };
+
+  // Right-click Context Menu: Delete line/drawing under cursor
+  const handleContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const nearDrawing = findDrawingNearPos(x, y, 8);
+    if (nearDrawing) {
+      e.preventDefault();
+      if (onDeleteDrawing) {
+        onDeleteDrawing(nearDrawing.id);
+      }
+      setSelectedDrawingId(null);
+      setHoveredDrawingId(null);
+      soundManager.playSelect();
+    }
   };
 
   // Mouse Up & Leave Handlers
   const handleMouseUp = () => {
     setDragMode('none');
+    setDraggingDrawingId(null);
+    setDraggingPointIndex(0);
     if (hoverPos) {
       updateCursor(hoverPos.x, hoverPos.y);
     }
@@ -1319,6 +1976,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const handleMouseLeave = () => {
     if (dragMode === 'none') {
       setHoverPos(null);
+      setHoveredDrawingId(null);
     }
   };
 
@@ -1409,6 +2067,25 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   const isCustomScale = priceScaleFactor !== 1.0 || verticalPanOffset !== 0 || zoomLevel !== 1.0 || panOffset !== 20;
 
+  // Selected or hovered horizontal line for quick actions pill
+  const activeHorizontalDrawing = useMemo(() => {
+    const targetId = selectedDrawingId || hoveredDrawingId;
+    if (!targetId) return null;
+    return drawings.find(d => d.id === targetId && d.type === 'horizontal') || null;
+  }, [drawings, selectedDrawingId, hoveredDrawingId]);
+
+  const activeHorizontalY = useMemo(() => {
+    if (!activeHorizontalDrawing || !activeHorizontalDrawing.points[0]) return null;
+    return priceToY(activeHorizontalDrawing.points[0].price);
+  }, [activeHorizontalDrawing, priceToY]);
+
+  // Selected or hovered fibonacci for quick action pill
+  const activeFibDrawing = useMemo(() => {
+    const targetId = selectedDrawingId || hoveredDrawingId;
+    if (!targetId) return null;
+    return drawings.find(d => d.id === targetId && d.type === 'fibonacci') || null;
+  }, [drawings, selectedDrawingId, hoveredDrawingId]);
+
   return (
     <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden bg-[#0a0e16] select-none">
       <canvas
@@ -1418,10 +2095,106 @@ export const StockChart: React.FC<StockChartProps> = ({
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseLeave}
         onDoubleClick={handleDoubleClick}
+        onContextMenu={handleContextMenu}
         onWheel={handleWheel}
         style={{ cursor: cursorStyle }}
         className="block touch-none"
       />
+
+      {/* Floating Interactive Action Pill for Selected / Hovered Horizontal Line */}
+      {activeHorizontalDrawing && activeHorizontalY !== null && activeHorizontalY >= 5 && activeHorizontalY <= ((containerRef.current?.clientHeight || 500) - bottomAxisHeight) && (
+        <div
+          style={{
+            top: `${Math.max(10, Math.min(activeHorizontalY - 36, (containerRef.current?.clientHeight || 500) - bottomAxisHeight - 42))}px`,
+            left: '50%',
+            transform: 'translateX(-50%)',
+          }}
+          className="absolute z-30 flex items-center gap-2 px-3 py-1 rounded-full bg-[#0d1422]/95 border border-sky-500/60 shadow-2xl backdrop-blur-md text-xs text-white pointer-events-auto transition-all animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div 
+            className="flex items-center gap-1.5 text-sky-400 font-mono text-[11px] font-semibold pr-1 cursor-ns-resize"
+            title="Drag line vertically on chart or move handles"
+          >
+            <GripVertical className="w-3.5 h-3.5 text-slate-400" />
+            <span>${activeHorizontalDrawing.points[0]?.price.toFixed(2)}</span>
+          </div>
+          <div className="h-3.5 w-px bg-slate-700" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onDeleteDrawing) {
+                onDeleteDrawing(activeHorizontalDrawing.id);
+              }
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+              soundManager.playSelect();
+            }}
+            className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/40 text-red-300 hover:text-red-100 text-[11px] font-medium transition-colors cursor-pointer"
+            title="Delete this horizontal line (or press Del / Backspace / Right-click line)"
+          >
+            <Trash2 className="w-3 h-3" />
+            <span>Remove</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+            }}
+            className="p-0.5 rounded hover:bg-slate-700/60 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Deselect line"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
+      {/* Floating Interactive Action Pill for Selected / Hovered Fibonacci Retracement */}
+      {activeFibDrawing && activeFibDrawing.points.length >= 2 && (
+        <div
+          style={{
+            top: '12px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+          }}
+          className="absolute z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#0d1422]/95 border border-sky-500/60 shadow-2xl backdrop-blur-md text-xs text-white pointer-events-auto transition-all animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div className="flex items-center gap-1.5 text-sky-400 font-mono text-[11px] font-semibold pr-1">
+            <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+            <span>
+              Fib ({activeFibDrawing.points[0].price < activeFibDrawing.points[1].price ? 'Downside 50%→110%' : 'Upside 50%→110%'})
+            </span>
+          </div>
+          <div className="h-3.5 w-px bg-slate-700" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onDeleteDrawing) {
+                onDeleteDrawing(activeFibDrawing.id);
+              }
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+              soundManager.playSelect();
+            }}
+            className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/40 text-red-300 hover:text-red-100 text-[11px] font-medium transition-colors cursor-pointer"
+            title="Delete this Fibonacci Retracement (or press Del / Backspace / Right-click)"
+          >
+            <Trash2 className="w-3 h-3" />
+            <span>Remove</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+            }}
+            className="p-0.5 rounded hover:bg-slate-700/60 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Deselect"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
       {/* Floating Scale & Axis Stretch/Contract Dock */}
       <div className="absolute bottom-9 right-20 flex items-center bg-[#101726]/90 border border-[#223147] rounded-md backdrop-blur-xs shadow-xl divide-x divide-[#1e2b3e] text-xs z-20 overflow-hidden">

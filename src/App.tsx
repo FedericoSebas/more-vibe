@@ -288,6 +288,29 @@ export default function App() {
   const handleSelectTimeframe = (tf: Timeframe) => {
     setTimeframe(tf);
     setPanOffset(0);
+
+    // Intelligently sync range to fit timeframe if needed
+    if (tf === '1H') {
+      if (selectedRange === '1d') {
+        setSelectedRange('1mo');
+      }
+    } else if (tf === '4H') {
+      if (selectedRange === '1d' || selectedRange === '5d') {
+        setSelectedRange('3mo');
+      }
+    } else if (tf === 'D') {
+      if (selectedRange === '1d' || selectedRange === '5d' || selectedRange === '1mo') {
+        setSelectedRange('1y');
+      }
+    } else if (tf === '1M') {
+      if (selectedRange !== '1d') {
+        setSelectedRange('1d');
+      }
+    } else if (tf === '5M' || tf === '10M') {
+      if (selectedRange !== '1d' && selectedRange !== '5d') {
+        setSelectedRange('5d');
+      }
+    }
   };
 
   // Handler for stock selection from scanner or dropdown
@@ -311,6 +334,14 @@ export default function App() {
 
   const handleAddDrawing = (drawing: DrawnObject) => {
     setDrawings(prev => [...prev, drawing]);
+  };
+
+  const handleUpdateDrawing = (updated: DrawnObject) => {
+    setDrawings(prev => prev.map(d => d.id === updated.id ? updated : d));
+  };
+
+  const handleDeleteDrawing = (id: string) => {
+    setDrawings(prev => prev.filter(d => d.id !== id));
   };
 
   const handleClearDrawings = () => {
@@ -413,6 +444,8 @@ export default function App() {
               magnetMode={magnetMode}
               drawings={drawings}
               onAddDrawing={handleAddDrawing}
+              onUpdateDrawing={handleUpdateDrawing}
+              onDeleteDrawing={handleDeleteDrawing}
               zoomLevel={zoomLevel}
               onZoomChange={setZoomLevel}
               timeframe={timeframe}

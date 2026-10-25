@@ -12,86 +12,70 @@ export function generateCandlesForStock(
   customRange?: CustomDateRange
 ): Candle[] {
   const candles: Candle[] = [];
-  let barCount = 360; // Historical bar count for smooth bidirectional panning & time stretching
+
+  // Candlestick resolution is strictly dictated by the chosen timeframe
   let intervalMinutes = 5;
+  if (timeframe === '1M') intervalMinutes = 1;
+  else if (timeframe === '5M') intervalMinutes = 5;
+  else if (timeframe === '10M') intervalMinutes = 10;
+  else if (timeframe === '1H') intervalMinutes = 60;
+  else if (timeframe === '4H') intervalMinutes = 240;
+  else if (timeframe === 'D') intervalMinutes = 1440;
+
+  let barCount = 360; // Historical bar count for smooth bidirectional panning & time stretching
 
   if (rangeKey && rangeKey !== 'custom') {
     switch (rangeKey) {
       case '1d':
-        intervalMinutes = timeframe === '1M' ? 1 : 5;
-        barCount = intervalMinutes === 1 ? 1440 : 288; // Full 24-hour continuous market: Overnight (8pm-4am), Pre-Market (4am-9:30am), Regular (9:30am-4pm), After-Market (4pm-8pm)
+        barCount = Math.max(1, Math.floor(1440 / intervalMinutes));
         break;
       case '5d':
-        intervalMinutes = 5;
-        barCount = 1440; // 5 full 24-hour trading days with complete Overnight, Pre-Market, Regular, and After-Market sessions
+        barCount = Math.max(1, Math.floor((5 * 1440) / intervalMinutes));
         break;
       case '1mo':
-        intervalMinutes = 60;
-        barCount = 140;
+        barCount = timeframe === '4H' ? 180 : (timeframe === '1H' ? 240 : (timeframe === 'D' ? 30 : 280));
         break;
       case '3mo':
-        intervalMinutes = 60;
-        barCount = 280;
+        barCount = timeframe === '4H' ? 360 : (timeframe === '1H' ? 360 : (timeframe === 'D' ? 90 : 360));
         break;
       case '6mo':
-        intervalMinutes = 1440;
-        barCount = 130;
+        barCount = timeframe === 'D' ? 130 : 260;
         break;
       case 'ytd':
-        intervalMinutes = 1440;
-        barCount = 200;
+        barCount = timeframe === 'D' ? 200 : 260;
         break;
       case '1y':
-        intervalMinutes = 1440;
-        barCount = 252;
+        barCount = timeframe === 'D' ? 252 : 360;
         break;
       case '2y':
-        intervalMinutes = 1440;
-        barCount = 504;
+        barCount = timeframe === 'D' ? 504 : 360;
         break;
       case '5y':
-        intervalMinutes = 10080;
         barCount = 260;
+        intervalMinutes = 10080;
         break;
       case 'max':
-        intervalMinutes = 43200;
         barCount = 120;
+        intervalMinutes = 43200;
         break;
     }
   } else if (rangeKey === 'custom' && customRange) {
     const startMs = new Date(customRange.startDate).getTime();
     const endMs = new Date(customRange.endDate).getTime();
     const diffDays = Math.max(1, (endMs - startMs) / 86400000);
-    if (diffDays <= 2) {
-      intervalMinutes = 5;
-      barCount = Math.round(diffDays * 78);
-    } else if (diffDays <= 14) {
-      intervalMinutes = 15;
-      barCount = Math.round(diffDays * 26);
-    } else if (diffDays <= 60) {
-      intervalMinutes = 60;
-      barCount = Math.round(diffDays * 7);
-    } else if (diffDays <= 730) {
-      intervalMinutes = 1440;
-      barCount = Math.round(diffDays);
-    } else {
-      intervalMinutes = 10080;
-      barCount = Math.round(diffDays / 7);
-    }
-  } else {
-    if (timeframe === '1M') intervalMinutes = 1;
-    else if (timeframe === '5M') intervalMinutes = 5;
-    else if (timeframe === '10M') intervalMinutes = 10;
-    else if (timeframe === '1H') intervalMinutes = 60;
-    else if (timeframe === '4H') intervalMinutes = 240;
-    else if (timeframe === 'D') intervalMinutes = 1440;
+    barCount = Math.min(1000, Math.max(10, Math.round((diffDays * 1440) / intervalMinutes)));
   }
 
   // Intraday 1D session: exactly 24 hours continuous market (20:00 PM ET previous day to 20:00 PM ET)
   if (rangeKey === '1d' || (!rangeKey && (timeframe === '1M' || timeframe === '5M' || timeframe === '10M'))) {
-    const stepMinutes = timeframe === '1M' ? 1 : (timeframe === '10M' ? 10 : (timeframe === '1H' ? 60 : 5));
+    const stepMinutes = 
+      timeframe === '1M' ? 1 : 
+      timeframe === '10M' ? 10 : 
+      timeframe === '1H' ? 60 : 
+      timeframe === '4H' ? 240 : 
+      timeframe === 'D' ? 1440 : 5;
     const totalMinutes = 24 * 60; // 1440 minutes = full 24 hours
-    const barsCount = Math.floor(totalMinutes / stepMinutes);
+    const barsCount = Math.max(1, Math.floor(totalMinutes / stepMinutes));
 
     // Anchor to 20:00 EDT (00:00 UTC Oct 23, 2024) bridging into full 24h market
     const baseAnchorMs = Date.UTC(2024, 9, 23, 0, 0, 0);
@@ -241,9 +225,14 @@ export function generateCandlesForStock(
 
   // 5D range: 5 distinct trading days with full 24-hour continuous market (Overnight, Pre, Reg, Post)
   if (rangeKey === '5d') {
-    const stepMinutes = 5;
+    const stepMinutes = 
+      timeframe === '1M' ? 1 : 
+      timeframe === '10M' ? 10 : 
+      timeframe === '1H' ? 60 : 
+      timeframe === '4H' ? 240 : 
+      timeframe === 'D' ? 1440 : 5;
     const minutesPerDay = 24 * 60; // 1440 mins
-    const barsPerDay = Math.floor(minutesPerDay / stepMinutes); // 288 bars
+    const barsPerDay = Math.max(1, Math.floor(minutesPerDay / stepMinutes));
     const days = 5;
     const baseAnchorMs = Date.UTC(2024, 9, 18, 0, 0, 0); // 5 trading days earlier at 20:00 EDT
 
@@ -301,15 +290,29 @@ export function generateCandlesForStock(
   // Multi-month and higher date ranges
   const now = Date.now();
   const intervalMs = intervalMinutes * 60 * 1000;
+  let anchorTime = now;
+  if (intervalMinutes === 240) {
+    anchorTime = Math.floor(now / (4 * 3600 * 1000)) * (4 * 3600 * 1000);
+  } else if (intervalMinutes === 60) {
+    anchorTime = Math.floor(now / (3600 * 1000)) * (3600 * 1000);
+  } else if (intervalMinutes === 10) {
+    anchorTime = Math.floor(now / (10 * 60 * 1000)) * (10 * 60 * 1000);
+  } else if (intervalMinutes === 5) {
+    anchorTime = Math.floor(now / (5 * 60 * 1000)) * (5 * 60 * 1000);
+  } else if (intervalMinutes === 1) {
+    anchorTime = Math.floor(now / (60 * 1000)) * (60 * 1000);
+  }
+
   let currentPrice = stock.ticker === 'TORO' ? 3.68 : stock.price * (1 - stock.changePercent / 100 * 0.85);
 
   for (let i = barCount - 1; i >= 0; i--) {
-    const candleTime = now - i * intervalMs;
+    const candleTime = anchorTime - i * intervalMs;
     const dateObj = new Date(candleTime);
     const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const month = months[dateObj.getMonth()];
     const day = dateObj.getDate().toString().padStart(2, '0');
     const hours = dateObj.getHours().toString().padStart(2, '0');
+    const mins = dateObj.getMinutes().toString().padStart(2, '0');
     let timeStr = `${month} ${day}`;
     if (intervalMinutes >= 1440 || timeframe === 'D') {
       timeStr = `${month} ${day}`;
@@ -317,7 +320,9 @@ export function generateCandlesForStock(
         timeStr = `${month} '${dateObj.getFullYear().toString().slice(-2)}`;
       }
     } else if (intervalMinutes >= 60 || timeframe === '1H' || timeframe === '4H') {
-      timeStr = `${month} ${day} ${hours}:00`;
+      timeStr = `${month} ${day} ${hours}:${mins}`;
+    } else {
+      timeStr = `${hours}:${mins}`;
     }
 
     const open = currentPrice;

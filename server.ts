@@ -34,65 +34,38 @@ async function fetchYahooChart(symbol: string, timeframe = '5M', rangeKey?: stri
   let interval = '5m';
   let range = '5d';
 
-  if (rangeKey && rangeKey !== 'custom') {
-    const rk = rangeKey.toLowerCase();
-    range = rk;
-    if (rk === '1d') {
-      interval = tf === '1M' ? '1m' : '5m';
-    } else if (rk === '5d') {
-      interval = tf === '1M' ? '5m' : (tf === '10M' ? '5m' : '5m');
-    } else if (rk === '1mo') {
-      interval = tf === '1M' || tf === '5M' ? '15m' : (tf === 'D' ? '1d' : '60m');
-    } else if (rk === '3mo') {
-      interval = tf === 'D' ? '1d' : '60m';
-    } else if (rk === '6mo') {
-      interval = '1d';
-    } else if (rk === 'ytd') {
-      interval = '1d';
-    } else if (rk === '1y') {
-      interval = '1d';
-    } else if (rk === '2y') {
-      interval = '1d';
-    } else if (rk === '5y') {
-      interval = '1wk';
-    } else if (rk === 'max') {
-      interval = '1mo';
-    }
-  } else if (!period1 || !period2) {
-    if (tf === '1M') {
-      interval = '1m';
-      range = '2d';
-    } else if (tf === '5M') {
-      interval = '5m';
-      range = '5d';
-    } else if (tf === '10M') {
-      // Fetch 5m bars over 10d and aggregate every 2 bars into true 10m candles
-      interval = '5m';
-      range = '10d';
-    } else if (tf === '1H') {
-      interval = '60m';
-      range = '1mo';
-    } else if (tf === '4H') {
-      // Fetch 60m bars over 3mo and aggregate every 4 bars into true 4h candles
-      interval = '60m';
-      range = '3mo';
-    } else if (tf === 'D' || tf === '1D') {
-      interval = '1d';
-      range = '1y';
-    }
+  // Determine interval and sensible range based on requested candlestick timeframe
+  if (tf === '1M') {
+    interval = '1m';
+    range = (rangeKey && rangeKey !== 'custom') ? rangeKey.toLowerCase() : '1d';
+  } else if (tf === '5M') {
+    interval = '5m';
+    range = (rangeKey && rangeKey !== 'custom') ? rangeKey.toLowerCase() : '5d';
+  } else if (tf === '10M') {
+    interval = '5m'; // Fetch 5m bars and aggregate 2 into true 10m candles
+    range = (rangeKey && rangeKey !== 'custom') ? rangeKey.toLowerCase() : '5d';
+  } else if (tf === '1H') {
+    interval = '60m';
+    range = (rangeKey && rangeKey !== 'custom') ? rangeKey.toLowerCase() : '1mo';
+  } else if (tf === '4H') {
+    interval = '60m'; // Fetch 60m bars and aggregate 4 into true 4H candles
+    range = (rangeKey && rangeKey !== 'custom') ? rangeKey.toLowerCase() : '3mo';
+  } else if (tf === 'D' || tf === '1D') {
+    interval = '1d';
+    range = (rangeKey && rangeKey !== 'custom') ? rangeKey.toLowerCase() : '1y';
   }
 
+  // Handle custom date range if period1 and period2 timestamps are provided
   if (period1 && period2) {
     const diffSec = period2 - period1;
-    if (diffSec <= 2 * 86400) interval = tf === '1M' ? '1m' : '5m';
-    else if (diffSec <= 10 * 86400) interval = '5m';
-    else if (diffSec <= 60 * 86400) interval = '60m';
-    else if (diffSec <= 730 * 86400) interval = '1d';
-    else interval = '1wk';
+    if (tf === '1M') interval = diffSec <= 7 * 86400 ? '1m' : '5m';
+    else if (tf === '5M' || tf === '10M') interval = '5m';
+    else if (tf === '1H' || tf === '4H') interval = '60m';
+    else if (tf === 'D' || tf === '1D') interval = '1d';
   }
 
   const cacheKey = period1 && period2 
-    ? `${symbol}_custom_${period1}_${period2}_${interval}`
+    ? `${symbol}_custom_${period1}_${period2}_${interval}_${tf}`
     : `${symbol}_${tf}_${range}_${interval}`;
   const cached = chartCache[cacheKey];
   const now = Date.now();
@@ -105,8 +78,8 @@ async function fetchYahooChart(symbol: string, timeframe = '5M', rangeKey?: stri
   if (period1 && period2) {
     url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=${interval}&period1=${period1}&period2=${period2}`;
   }
-  // Include pre-market and after-market sessions alongside regular trading for 1d and 5d ranges
-  if (range === '1d' || range === '5d' || rangeKey === '1d' || rangeKey === '5d') {
+  // Include pre-market and after-market sessions alongside regular trading for intraday minute ranges
+  if ((range === '1d' || range === '5d' || rangeKey === '1d' || rangeKey === '5d') && (tf === '1M' || tf === '5M' || tf === '10M')) {
     url += '&includePrePost=true';
   }
 
@@ -216,31 +189,65 @@ async function fetchYahooChart(symbol: string, timeframe = '5M', rangeKey?: stri
   let candles = rawBars;
 
   if (tf === '10M') {
-    // Merge every 2 consecutive 5m bars into a true 10m bar
-    candles = [];
-    for (let i = 0; i < rawBars.length; i += 2) {
-      const b1 = rawBars[i];
-      const b2 = rawBars[i + 1];
-      if (!b2) {
-        candles.push(b1);
-      } else {
+    // If rawBars were 5m bars, merge every 2 consecutive 5m bars into a true 10m bar
+    if (interval === '5m') {
+      candles = [];
+      for (let i = 0; i < rawBars.length; i += 2) {
+        const b1 = rawBars[i];
+        const b2 = rawBars[i + 1];
+        if (!b2) {
+          candles.push(b1);
+        } else {
+          candles.push({
+            time: b1.time,
+            timeStr: b1.timeStr,
+            open: b1.open,
+            high: Math.round(Math.max(b1.high, b2.high) * 10000) / 10000,
+            low: Math.round(Math.min(b1.low, b2.low) * 10000) / 10000,
+            close: b2.close,
+            volume: b1.volume + b2.volume,
+            session: b1.session
+          });
+        }
+      }
+    }
+  } else if (tf === '1H') {
+    // If rawBars were 5m bars, merge 12 consecutive 5m bars into a true 1H bar
+    if (interval === '5m') {
+      candles = [];
+      for (let i = 0; i < rawBars.length; i += 12) {
+        const chunk = rawBars.slice(i, i + 12);
+        const b1 = chunk[0];
+        const bLast = chunk[chunk.length - 1];
+        let h = b1.high;
+        let l = b1.low;
+        let v = 0;
+        for (const c of chunk) {
+          if (c.high > h) h = c.high;
+          if (c.low < l) l = c.low;
+          v += c.volume;
+        }
         candles.push({
           time: b1.time,
           timeStr: b1.timeStr,
           open: b1.open,
-          high: Math.round(Math.max(b1.high, b2.high) * 10000) / 10000,
-          low: Math.round(Math.min(b1.low, b2.low) * 10000) / 10000,
-          close: b2.close,
-          volume: b1.volume + b2.volume,
+          high: Math.round(h * 10000) / 10000,
+          low: Math.round(l * 10000) / 10000,
+          close: bLast.close,
+          volume: v,
           session: b1.session
         });
       }
+    } else {
+      candles = rawBars;
     }
   } else if (tf === '4H') {
-    // Merge every 4 consecutive 1h bars into a true 4h bar
+    // For 4H, merge consecutive bars into true 4h candles
+    // If interval was 60m: 4 bars = 4 hours. If interval was 5m: 48 bars = 4 hours.
+    const step = interval === '5m' ? 48 : 4;
     candles = [];
-    for (let i = 0; i < rawBars.length; i += 4) {
-      const chunk = rawBars.slice(i, i + 4);
+    for (let i = 0; i < rawBars.length; i += step) {
+      const chunk = rawBars.slice(i, i + step);
       const b1 = chunk[0];
       const bLast = chunk[chunk.length - 1];
       let h = b1.high;
@@ -264,8 +271,8 @@ async function fetchYahooChart(symbol: string, timeframe = '5M', rangeKey?: stri
     }
   }
 
-  // Ensure 1D range always spans full 16-hour day from 04:00 AM to 20:00 PM ET
-  if ((range === '1d' || rangeKey === '1d') && candles.length > 0) {
+  // Ensure 1D range always spans full 16-hour day from 04:00 AM to 20:00 PM ET for minute-level intraday timeframes (1M, 5M, 10M)
+  if ((range === '1d' || rangeKey === '1d') && candles.length > 0 && (tf === '1M' || tf === '5M' || tf === '10M')) {
     const stepMin = interval === '1m' ? 1 : (interval === '10m' ? 10 : 5);
     const stepMs = stepMin * 60 * 1000;
     
