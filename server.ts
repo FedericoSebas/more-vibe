@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -168,8 +169,12 @@ async function fetchYahooChart(symbol: string, timeframe = '5M', rangeKey?: stri
       return Math.round(val * 10000) / 10000;
     };
 
-    // Calculate Eastern Time session: Pre-Market (4:00-9:30), Regular (9:30-16:00), Post-Market (16:00-20:00)
-    let session: 'pre' | 'regular' | 'post' = 'regular';
+    // Calculate Eastern Time session for 24-Hour Continuous Market:
+    // - Overnight Market: 20:00 to 04:00 ET (8:00 PM to 4:00 AM)
+    // - Pre-Market: 04:00 to 09:30 ET (4:00 AM to 9:30 AM)
+    // - Regular Market: 09:30 to 16:00 ET (9:30 AM to 4:00 PM)
+    // - After-Market: 16:00 to 20:00 ET (4:00 PM to 8:00 PM)
+    let session: 'pre' | 'regular' | 'post' | 'overnight' = 'regular';
     if (range === '1d' || range === '5d' || rangeKey === '1d' || rangeKey === '5d') {
       const parts = new Intl.DateTimeFormat('en-US', {
         timeZone: 'America/New_York',
@@ -184,7 +189,9 @@ async function fetchYahooChart(symbol: string, timeframe = '5M', rangeKey?: stri
         if (p.type === 'minute') etMinute = parseInt(p.value, 10);
       }
       const timeInMinutes = etHour * 60 + etMinute;
-      if (timeInMinutes >= 240 && timeInMinutes < 570) {
+      if (timeInMinutes >= 1200 || timeInMinutes < 240) {
+        session = 'overnight';
+      } else if (timeInMinutes >= 240 && timeInMinutes < 570) {
         session = 'pre';
       } else if (timeInMinutes >= 570 && timeInMinutes < 960) {
         session = 'regular';
@@ -374,65 +381,12 @@ app.get('/api/stock/chart/:ticker', async (req: Request, res: Response) => {
 // Route: Live NASDAQ Scanner Quotes
 app.get('/api/stock/scanner', async (_req: Request, res: Response) => {
   try {
-    const now = Date.now();
-    const cached = quoteCache['nasdaq_scanner'];
-    // 10s cache for scanner batch
-    if (cached && now - cached.timestamp < 10000) {
-      return res.json(cached.data);
+    const jsonPath = path.resolve(__dirname, 'src/data/nasdaqStocks.json');
+    if (fs.existsSync(jsonPath)) {
+      const data = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
+      return res.json(data);
     }
-
-    const quotes = await Promise.allSettled(
-      NASDAQ_SYMBOLS.map(sym => fetchYahooChart(sym, '5M'))
-    );
-
-    const successful = quotes
-      .filter((q): q is PromiseFulfilledResult<any> => q.status === 'fulfilled')
-      .map(q => {
-        const item = q.value;
-        const candles = item.candles || [];
-        const last = candles.length > 0 ? candles[candles.length - 1] : null;
-        const first = candles.length > 0 ? candles[0] : null;
-        const currentPrice = item.meta?.price ?? (last ? last.close : 0);
-
-        const calcChange = (idxOffset: number): number => {
-          if (!last || candles.length <= idxOffset) return 0;
-          const ref = candles[candles.length - 1 - idxOffset];
-          if (!ref || !ref.close) return 0;
-          const diff = ((last.close - ref.close) / ref.close) * 100;
-          return Number.isFinite(diff) ? Number(diff.toFixed(2)) : 0;
-        };
-
-        const m1 = calcChange(1);
-        const m5 = calcChange(2);
-        const m15 = calcChange(4);
-        const h1 = calcChange(12);
-        const h4 = calcChange(48);
-
-        const openPercent = first && first.open && first.open > 0
-          ? Number((((currentPrice - first.open) / first.open) * 100).toFixed(2))
-          : 0;
-
-        return {
-          ticker: item.ticker,
-          price: Number.isFinite(item.meta?.price) ? item.meta.price : currentPrice || 0,
-          change: Number.isFinite(item.meta?.change) ? item.meta.change : 0,
-          changePercent: Number.isFinite(item.meta?.changePercent) ? item.meta.changePercent : 0,
-          openPercent: Number.isFinite(openPercent) ? openPercent : 0,
-          volume: Number.isFinite(item.meta?.volume) ? item.meta.volume : 0,
-          high: Number.isFinite(item.meta?.high) ? item.meta.high : currentPrice || 0,
-          low: Number.isFinite(item.meta?.low) ? item.meta.low : currentPrice || 0,
-          open: Number.isFinite(item.meta?.open) ? item.meta.open : (first?.open ?? currentPrice) || 0,
-          prevClose: Number.isFinite(item.meta?.prevClose) ? item.meta.prevClose : (first?.open ?? currentPrice) || 0,
-          m1Change: m1,
-          m5Change: m5,
-          m15Change: m15,
-          h1Change: h1,
-          h4Change: h4,
-        };
-      });
-
-    quoteCache['nasdaq_scanner'] = { data: successful, timestamp: now };
-    res.json(successful);
+    res.json([]);
   } catch (err: any) {
     console.error('Error fetching scanner quotes:', err.message);
     res.status(500).json({ error: err.message });

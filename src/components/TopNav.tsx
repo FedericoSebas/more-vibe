@@ -36,8 +36,9 @@ export const TopNav: React.FC<TopNavProps> = ({
   const [soundEnabled, setSoundEnabled] = useState(soundManager.enabled);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [copiedShare, setCopiedShare] = useState(false);
+  const [activeSession, setActiveSession] = useState<{ name: string; color: string }>({ name: '24H Market', color: '#10b981' });
 
-  // Keep live market Eastern Time updated
+  // Keep live market Eastern Time updated and track 24-hour market session
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
@@ -54,8 +55,31 @@ export const TopNav: React.FC<TopNavProps> = ({
         timeZone: 'America/New_York'
       };
       const formatted = new Intl.DateTimeFormat('en-US', options).format(now);
-      // Clean up string to uppercase SAT OCT 24 2026 6:14 PM ET
       setTimeStr(formatted.toUpperCase() + ' ET');
+
+      // Determine 24H market session
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'America/New_York',
+        hour: 'numeric',
+        minute: 'numeric',
+        hourCycle: 'h23'
+      }).formatToParts(now);
+      let etHour = 0;
+      let etMinute = 0;
+      for (const p of parts) {
+        if (p.type === 'hour') etHour = parseInt(p.value, 10);
+        if (p.type === 'minute') etMinute = parseInt(p.value, 10);
+      }
+      const timeInMinutes = etHour * 60 + etMinute;
+      if (timeInMinutes >= 1200 || timeInMinutes < 240) {
+        setActiveSession({ name: 'Overnight Market', color: '#a855f7' });
+      } else if (timeInMinutes >= 240 && timeInMinutes < 570) {
+        setActiveSession({ name: 'Pre-Market', color: '#f97316' });
+      } else if (timeInMinutes >= 570 && timeInMinutes < 960) {
+        setActiveSession({ name: 'Regular Session', color: '#10b981' });
+      } else {
+        setActiveSession({ name: 'After-Market', color: '#3b82f6' });
+      }
     };
 
     updateTime();
@@ -190,15 +214,21 @@ export const TopNav: React.FC<TopNavProps> = ({
           {soundEnabled ? <Volume2 className="w-3.5 h-3.5" /> : <VolumeX className="w-3.5 h-3.5" />}
         </button>
 
-        {/* Market Status (matches the red dot + Markets Closed / Live in screenshot) */}
+        {/* Market Status with 24H Continuous Session Indicator */}
         <div 
           onClick={onToggleLive}
           className="flex items-center gap-1.5 cursor-pointer pl-1 text-[11px]"
-          title="Click to toggle Live/Closed simulation state"
+          title="Click to toggle Live/Closed simulation state (24-Hour Continuous Market)"
         >
-          <span className={`w-2 h-2 rounded-full ${isLive ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'}`} />
+          <span 
+            className="w-2 h-2 rounded-full animate-pulse" 
+            style={{ backgroundColor: isLive ? activeSession.color : '#ef4444' }} 
+          />
           <span className="font-medium text-slate-300">
-            {isLive ? 'Markets Live' : 'Markets Closed'}
+            {isLive ? activeSession.name : 'Markets Closed'}
+          </span>
+          <span className="text-[10px] px-1 py-0.2 rounded bg-[#172131] text-slate-400 border border-[#223147] font-mono">
+            24H
           </span>
         </div>
 

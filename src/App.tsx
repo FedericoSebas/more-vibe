@@ -24,8 +24,8 @@ import { CustomizeModal } from './components/CustomizeModal';
 
 export default function App() {
   const [stocks, setStocks] = useState<StockQuote[]>(INITIAL_STOCKS);
-  // Default to AIOK in 1M timeframe and 1D range matching reference Image 2
-  const defaultStock = INITIAL_STOCKS.find(s => s.ticker === 'AIOK') || INITIAL_STOCKS[0];
+  // Default to CLRO matching reference images
+  const defaultStock = INITIAL_STOCKS.find(s => s.ticker === 'CLRO') || INITIAL_STOCKS[0];
   const [selectedStock, setSelectedStock] = useState<StockQuote>(defaultStock);
   const [timeframe, setTimeframe] = useState<Timeframe>('1M');
   const [selectedRange, setSelectedRange] = useState<DateRangeKey>('1d');
@@ -34,10 +34,13 @@ export default function App() {
     endDate: new Date().toISOString().split('T')[0]
   });
   const [candles, setCandles] = useState<Candle[]>(() => generateCandlesForStock(defaultStock, '1M', '1d'));
-  const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
+  const [panOffset, setPanOffset] = useState<number>(0);
   const [chartType, setChartType] = useState<ChartType>('candles');
   const [isLoadingChart, setIsLoadingChart] = useState<boolean>(false);
   const [isRealDataActive, setIsRealDataActive] = useState<boolean>(false);
+
+  const selectedStockRef = useRef<StockQuote>(selectedStock);
+  selectedStockRef.current = selectedStock;
   
   // Indicators matching the reference image (EMA 9, SMA 20, SMA 200, VWAP, VP 50, MACD)
   const [indicators, setIndicators] = useState<IndicatorVisibility>({
@@ -69,33 +72,19 @@ export default function App() {
   const [isOverviewOpen, setIsOverviewOpen] = useState<boolean>(false);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState<boolean>(false);
 
-  // Convert app timeframe to API query params
-  const getTimeframeParams = (tf: Timeframe) => {
-    switch (tf) {
-      case '1M': return { interval: '1m', range: '1d' };
-      case '5M': return { interval: '5m', range: '5d' };
-      case '10M': return { interval: '5m', range: '5d' };
-      case '1H': return { interval: '60m', range: '1mo' };
-      case '4H': return { interval: '60m', range: '1mo' };
-      case 'D': return { interval: '1d', range: '1y' };
-      default: return { interval: '5m', range: '5d' };
-    }
-  };
-
-  // Fetch real NASDAQ chart data from backend proxy
+  // Fetch real NASDAQ chart data from backend proxy (stable callback with no external state deps)
   const loadRealStockChart = useCallback(async (
     ticker: string, 
     tf: Timeframe,
-    rangeKey: DateRangeKey = selectedRange,
+    rangeKey: DateRangeKey,
     custom?: CustomDateRange
   ) => {
     setIsLoadingChart(true);
     try {
       let queryUrl = `/api/stock/chart/${encodeURIComponent(ticker)}?timeframe=${encodeURIComponent(tf)}&range=${encodeURIComponent(rangeKey)}`;
-      const activeCustom = custom || customRange;
-      if (rangeKey === 'custom' && activeCustom?.startDate && activeCustom?.endDate) {
-        const p1 = Math.floor(new Date(activeCustom.startDate).getTime() / 1000);
-        const p2 = Math.floor(new Date(activeCustom.endDate).getTime() / 1000);
+      if (rangeKey === 'custom' && custom?.startDate && custom?.endDate) {
+        const p1 = Math.floor(new Date(custom.startDate).getTime() / 1000);
+        const p2 = Math.floor(new Date(custom.endDate).getTime() / 1000);
         queryUrl += `&period1=${p1}&period2=${p2}`;
       }
       const res = await fetch(queryUrl);
@@ -110,17 +99,17 @@ export default function App() {
 
         // Update selected stock meta
         if (data.meta) {
-          const updatedPrice = data.meta.price || selectedStock.price;
-          const updatedChange = typeof data.meta.change === 'number' && Number.isFinite(data.meta.change) ? data.meta.change : selectedStock.change;
-          const updatedPct = typeof data.meta.changePercent === 'number' && Number.isFinite(data.meta.changePercent) ? data.meta.changePercent : selectedStock.changePercent;
-          const updatedVol = typeof data.meta.volume === 'number' && Number.isFinite(data.meta.volume) ? data.meta.volume : selectedStock.volume;
+          const updatedPrice = data.meta.price;
+          const updatedChange = typeof data.meta.change === 'number' && Number.isFinite(data.meta.change) ? data.meta.change : undefined;
+          const updatedPct = typeof data.meta.changePercent === 'number' && Number.isFinite(data.meta.changePercent) ? data.meta.changePercent : undefined;
+          const updatedVol = typeof data.meta.volume === 'number' && Number.isFinite(data.meta.volume) ? data.meta.volume : undefined;
 
           setSelectedStock(prev => ({
             ...prev,
-            price: updatedPrice,
-            change: updatedChange,
-            changePercent: updatedPct,
-            volume: updatedVol,
+            price: updatedPrice ?? prev.price,
+            change: updatedChange ?? prev.change,
+            changePercent: updatedPct ?? prev.changePercent,
+            volume: updatedVol ?? prev.volume,
             high: typeof data.meta.high === 'number' && Number.isFinite(data.meta.high) ? data.meta.high : prev.high,
             low: typeof data.meta.low === 'number' && Number.isFinite(data.meta.low) ? data.meta.low : prev.low,
             open: typeof data.meta.open === 'number' && Number.isFinite(data.meta.open) ? data.meta.open : prev.open,
@@ -131,10 +120,11 @@ export default function App() {
 
           setStocks(prev => prev.map(s => s.ticker === ticker ? {
             ...s,
-            price: updatedPrice,
-            change: updatedChange,
-            changePercent: updatedPct,
-            volume: updatedVol,
+            price: updatedPrice ?? s.price,
+            change: updatedChange ?? s.change,
+            changePercent: s.changePercent,
+            openPercent: s.openPercent,
+            volume: updatedVol ?? s.volume,
             high: typeof data.meta.high === 'number' && Number.isFinite(data.meta.high) ? data.meta.high : s.high,
             low: typeof data.meta.low === 'number' && Number.isFinite(data.meta.low) ? data.meta.low : s.low,
             open: typeof data.meta.open === 'number' && Number.isFinite(data.meta.open) ? data.meta.open : s.open,
@@ -142,18 +132,17 @@ export default function App() {
           } : s));
         }
       } else {
-        // Fallback to high-fidelity generator if market closed or empty
-        const fallback = generateCandlesForStock(selectedStock, tf, rangeKey, custom || customRange);
+        const fallback = generateCandlesForStock(selectedStockRef.current, tf, rangeKey, custom);
         setCandles(fallback);
       }
     } catch (err) {
       console.warn('Real NASDAQ API fetch notice (using high-precision fallback):', err);
-      const fallback = generateCandlesForStock(selectedStock, tf, rangeKey, custom || customRange);
+      const fallback = generateCandlesForStock(selectedStockRef.current, tf, rangeKey, custom);
       setCandles(fallback);
     } finally {
       setIsLoadingChart(false);
     }
-  }, [selectedStock.ticker, selectedRange, customRange]);
+  }, []);
 
   // Fetch real NASDAQ scanner watchlist quotes
   const loadRealScannerQuotes = useCallback(async () => {
@@ -208,12 +197,15 @@ export default function App() {
     }
   }, []);
 
-  // Initial load of real chart & scanner quotes
-  // Initial load of real chart & scanner quotes
+  // Initial load of scanner quotes on mount
+  useEffect(() => {
+    loadRealScannerQuotes();
+  }, [loadRealScannerQuotes]);
+
+  // Load chart whenever selected ticker, timeframe, or date range changes
   useEffect(() => {
     loadRealStockChart(selectedStock.ticker, timeframe, selectedRange, customRange);
-    loadRealScannerQuotes();
-  }, [selectedStock.ticker, timeframe, selectedRange, customRange, loadRealStockChart, loadRealScannerQuotes]);
+  }, [selectedStock.ticker, timeframe, selectedRange, customRange.startDate, customRange.endDate, loadRealStockChart]);
 
   // Continuous real-time polling of live NASDAQ feed
   useEffect(() => {
@@ -239,26 +231,28 @@ export default function App() {
             setCandles(data.candles);
             if (data.meta) {
               const newPrice = data.meta.price;
-              const isUptick = newPrice >= selectedStock.price;
-              if (newPrice !== selectedStock.price) {
-                soundManager.playTick(isUptick);
-                setUpdatedTickers(p => ({ ...p, [selectedStock.ticker]: isUptick ? 'up' : 'down' }));
-                setTimeout(() => setUpdatedTickers(p => {
-                  const copy = { ...p };
-                  delete copy[selectedStock.ticker];
-                  return copy;
-                }), 700);
-              }
+              setSelectedStock(prev => {
+                if (newPrice !== undefined && newPrice !== prev.price) {
+                  const isUptick = newPrice >= prev.price;
+                  soundManager.playTick(isUptick);
+                  setUpdatedTickers(p => ({ ...p, [prev.ticker]: isUptick ? 'up' : 'down' }));
+                  setTimeout(() => setUpdatedTickers(p => {
+                    const copy = { ...p };
+                    delete copy[prev.ticker];
+                    return copy;
+                  }), 700);
+                }
 
-              setSelectedStock(prev => ({
-                ...prev,
-                price: newPrice,
-                change: data.meta.change ?? prev.change,
-                changePercent: data.meta.changePercent ?? prev.changePercent,
-                volume: data.meta.volume ?? prev.volume,
-                high: data.meta.high ?? prev.high,
-                low: data.meta.low ?? prev.low,
-              }));
+                return {
+                  ...prev,
+                  price: newPrice ?? prev.price,
+                  change: data.meta.change ?? prev.change,
+                  changePercent: data.meta.changePercent ?? prev.changePercent,
+                  volume: data.meta.volume ?? prev.volume,
+                  high: data.meta.high ?? prev.high,
+                  low: data.meta.low ?? prev.low,
+                };
+              });
             }
           }
         })
@@ -269,11 +263,12 @@ export default function App() {
       clearInterval(scannerTimer);
       clearInterval(chartTimer);
     };
-  }, [isLive, speed, selectedStock.ticker, selectedStock.price, timeframe, selectedRange, customRange, loadRealScannerQuotes]);
+  }, [isLive, speed, selectedStock.ticker, timeframe, selectedRange, customRange.startDate, customRange.endDate, loadRealScannerQuotes]);
 
   // Handler for range selection from calendar icon
   const handleSelectRange = (range: DateRangeKey, custom?: CustomDateRange) => {
     setSelectedRange(range);
+    setPanOffset(0);
     if (custom) {
       setCustomRange(custom);
     }
@@ -288,18 +283,17 @@ export default function App() {
       else targetTf = 'D';
     }
     setTimeframe(targetTf);
-    loadRealStockChart(selectedStock.ticker, targetTf, range, custom || customRange);
   };
 
   const handleSelectTimeframe = (tf: Timeframe) => {
     setTimeframe(tf);
-    loadRealStockChart(selectedStock.ticker, tf, selectedRange, customRange);
+    setPanOffset(0);
   };
 
   // Handler for stock selection from scanner or dropdown
   const handleSelectStock = (stock: StockQuote) => {
     setSelectedStock(stock);
-    loadRealStockChart(stock.ticker, timeframe, selectedRange, customRange);
+    setPanOffset(0);
   };
 
   const handleToggleFavorite = (ticker: string) => {
@@ -422,7 +416,8 @@ export default function App() {
               zoomLevel={zoomLevel}
               onZoomChange={setZoomLevel}
               timeframe={timeframe}
-              onVisibleRangeChange={(start, end) => setVisibleRange({ start, end })}
+              panOffset={panOffset}
+              onPanChange={setPanOffset}
             />
           </div>
 
@@ -431,8 +426,7 @@ export default function App() {
             <MacdChart
               candles={candles}
               zoomLevel={zoomLevel}
-              startIndex={visibleRange.start}
-              endIndex={visibleRange.end}
+              panOffset={panOffset}
             />
           )}
         </div>

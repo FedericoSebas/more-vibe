@@ -5,11 +5,12 @@ import { calculateMACD } from '../utils/stockData';
 interface MacdChartProps {
   candles: Candle[];
   zoomLevel: number;
+  panOffset?: number;
   startIndex?: number;
   endIndex?: number;
 }
 
-export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startIndex, endIndex }) => {
+export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, panOffset = 0, startIndex, endIndex }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -17,8 +18,14 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startI
 
   const totalCandles = candles.length || 1;
   const defaultBars = Math.max(10, Math.min(totalCandles, Math.round(totalCandles / zoomLevel)));
-  const effStart = startIndex !== undefined ? startIndex : Math.max(0, totalCandles - defaultBars);
-  const effEnd = endIndex !== undefined ? endIndex : Math.min(totalCandles, effStart + defaultBars);
+  const maxPan = Math.max(0, totalCandles - defaultBars);
+  const effectivePan = Math.max(0, Math.min(maxPan, panOffset));
+  const effStart = startIndex !== undefined && startIndex >= 0 
+    ? startIndex 
+    : Math.max(0, totalCandles - defaultBars - effectivePan);
+  const effEnd = endIndex !== undefined && endIndex > 0 
+    ? endIndex 
+    : Math.min(totalCandles, effStart + defaultBars);
 
   const visibleMacd = useMemo(() => macdData.slice(effStart, effEnd), [macdData, effStart, effEnd]);
   const visibleCandlesSlice = useMemo(() => candles.slice(effStart, effEnd), [candles, effStart, effEnd]);
@@ -27,12 +34,31 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startI
 
   const renderMacd = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    // Use container rect for logical CSS pixels so axes align on any display resolution (QHD, 4K, Retina)
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    if (width <= 0 || height <= 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const bufferW = Math.round(width * dpr);
+    const bufferH = Math.round(height * dpr);
+
+    if (canvas.width !== bufferW || canvas.height !== bufferH) {
+      canvas.width = bufferW;
+      canvas.height = bufferH;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+
+    // Set scale transform so all drawing coordinates are in logical CSS pixels
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
     const plotWidth = width - rightAxisWidth;
     const plotHeight = height;
 
@@ -45,14 +71,23 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startI
     const candleWidth = plotWidth / visibleMacd.length;
 
     // Extended Hours Session Shading (perfect vertical match with StockChart)
+    // Colors: Pre-market (Orange), After-market (Blue), Overnight (Purple) with opacity >= 8% (0.12)
     for (let i = 0; i < visibleCandlesSlice.length; i++) {
       const c = visibleCandlesSlice[i];
       const x = i * candleWidth + candleWidth / 2;
       const halfW = candleWidth / 2;
 
-      if (c && (c.session === 'pre' || c.session === 'post')) {
-        ctx.fillStyle = 'rgba(38, 28, 20, 0.42)';
-        ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+      if (c) {
+        if (c.session === 'pre') {
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.12)';
+          ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+        } else if (c.session === 'post') {
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+          ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+        } else if (c.session === 'overnight') {
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.12)';
+          ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+        }
       }
 
       if (i > 0 && visibleCandlesSlice[i - 1]) {
@@ -62,7 +97,7 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startI
           ctx.beginPath();
           ctx.lineWidth = 1;
           ctx.setLineDash([3, 3]);
-          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
           ctx.moveTo(boundaryX, 0);
           ctx.lineTo(boundaryX, plotHeight);
           ctx.stroke();
@@ -199,31 +234,25 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startI
 
   }, [visibleMacd]);
 
-  // Handle Resize
+  // Handle Resize via ResizeObserver
   useEffect(() => {
-    const handleResize = () => {
-      const canvas = canvasRef.current;
-      const container = containerRef.current;
-      if (!canvas || !container) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-      const rect = container.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+    const ro = new ResizeObserver(() => {
+      renderMacd();
+    });
+    ro.observe(container);
 
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.scale(dpr, dpr);
-      }
+    const handleWindowResize = () => {
       renderMacd();
     };
+    window.addEventListener('resize', handleWindowResize);
 
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
+    };
   }, [renderMacd]);
 
   useEffect(() => {

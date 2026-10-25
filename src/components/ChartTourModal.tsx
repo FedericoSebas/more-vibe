@@ -1,5 +1,4 @@
-import React from 'react';
-import { X, CandlestickChart, TrendingUp, Layers, SlidersHorizontal, Check } from 'lucide-react';
+import { X, CandlestickChart, TrendingUp, Layers, SlidersHorizontal, Check, Clock } from 'lucide-react';
 
 interface ChartTourModalProps {
   isOpen: boolean;
@@ -28,6 +27,46 @@ export const ChartTourModal: React.FC<ChartTourModalProps> = ({ isOpen, onClose 
 
         {/* Content */}
         <div className="p-5 space-y-4 overflow-y-auto max-h-[70vh] text-xs text-slate-300">
+          <div className="flex items-start gap-3 p-3 bg-[#131b27] rounded border border-[#1d293b]">
+            <Clock className="w-5 h-5 text-purple-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-slate-100 text-sm">24-Hour Continuous Market Sessions</div>
+              <p className="mt-1 text-slate-400 leading-relaxed">
+                Seamless around-the-clock trading across four color-coded market sessions:
+              </p>
+              <div className="grid grid-cols-2 gap-2 mt-2 font-mono text-[11px]">
+                <div className="p-2 rounded bg-purple-950/40 border border-purple-800/40 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded bg-purple-500 shrink-0" />
+                  <div>
+                    <div className="text-purple-300 font-bold">Overnight Market</div>
+                    <div className="text-purple-400 text-[10px]">8:00 PM – 4:00 AM ET</div>
+                  </div>
+                </div>
+                <div className="p-2 rounded bg-orange-950/40 border border-orange-800/40 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded bg-orange-500 shrink-0" />
+                  <div>
+                    <div className="text-orange-300 font-bold">Pre-Market</div>
+                    <div className="text-orange-400 text-[10px]">4:00 AM – 9:30 AM ET</div>
+                  </div>
+                </div>
+                <div className="p-2 rounded bg-slate-900 border border-slate-700/50 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded bg-slate-500 shrink-0" />
+                  <div>
+                    <div className="text-slate-300 font-bold">Regular Market</div>
+                    <div className="text-slate-400 text-[10px]">9:30 AM – 4:00 PM ET</div>
+                  </div>
+                </div>
+                <div className="p-2 rounded bg-blue-950/40 border border-blue-800/40 flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded bg-blue-500 shrink-0" />
+                  <div>
+                    <div className="text-blue-300 font-bold">After-Market</div>
+                    <div className="text-blue-400 text-[10px]">4:00 PM – 8:00 PM ET</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
           <div className="flex items-start gap-3 p-3 bg-[#131b27] rounded border border-[#1d293b]">
             <CandlestickChart className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
             <div>

@@ -29,6 +29,8 @@ interface StockChartProps {
   zoomLevel: number;
   onZoomChange: (zoom: number) => void;
   timeframe: Timeframe;
+  panOffset?: number;
+  onPanChange?: (pan: number | ((prev: number) => number)) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
 }
 
@@ -46,13 +48,24 @@ export const StockChart: React.FC<StockChartProps> = ({
   zoomLevel,
   onZoomChange,
   timeframe,
+  panOffset: externalPanOffset,
+  onPanChange,
   onVisibleRangeChange
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   // Time & Price pan offsets (default 0 so chart starts at the beginning 04:00 AM)
-  const [panOffset, setPanOffset] = useState<number>(0);
+  const [internalPanOffset, setInternalPanOffset] = useState<number>(0);
+  const panOffset = externalPanOffset !== undefined ? externalPanOffset : internalPanOffset;
+  const setPanOffset = useCallback((updater: number | ((prev: number) => number)) => {
+    if (onPanChange) {
+      onPanChange(updater);
+    } else {
+      setInternalPanOffset(updater);
+    }
+  }, [onPanChange]);
+
   const [verticalPanOffset, setVerticalPanOffset] = useState<number>(0);
   // Price stretch / contract factor (1.0 = auto-fit, <1 = stretched, >1 = contracted)
   const [priceScaleFactor, setPriceScaleFactor] = useState<number>(1.0);
@@ -97,10 +110,6 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   const visibleCandles = useMemo(() => candles.slice(startIndex, endIndex), [candles, startIndex, endIndex]);
 
-  useEffect(() => {
-    onVisibleRangeChange?.(startIndex, endIndex);
-  }, [startIndex, endIndex, onVisibleRangeChange]);
-
   // Reset to Auto-Scale
   const handleResetAutoScale = useCallback(() => {
     setPriceScaleFactor(1.0);
@@ -112,12 +121,31 @@ export const StockChart: React.FC<StockChartProps> = ({
   // Render chart onto Canvas
   const renderChart = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    const width = canvas.width;
-    const height = canvas.height;
+    // Use container rect for logical CSS pixels so axes align on any display resolution (QHD, 4K, Retina)
+    const rect = container.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+    if (width <= 0 || height <= 0) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const bufferW = Math.round(width * dpr);
+    const bufferH = Math.round(height * dpr);
+
+    if (canvas.width !== bufferW || canvas.height !== bufferH) {
+      canvas.width = bufferW;
+      canvas.height = bufferH;
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+    }
+
+    // Set scale transform so all drawing coordinates are in logical CSS pixels
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
     const plotWidth = width - rightAxisWidth;
     const plotHeight = height - bottomAxisHeight;
     const volumeHeight = plotHeight * 0.16;
@@ -221,16 +249,25 @@ export const StockChart: React.FC<StockChartProps> = ({
     }
 
     // 2.5 Draw Extended Hours Session Shading & Clean Session Boundary Dividers
-    const hasExtendedSessions = visibleCandles.some(c => c.session === 'pre' || c.session === 'post');
+    // 24-Hour Market Colors: Pre-market (Orange), After-market (Blue), Overnight (Purple) with opacity >= 8% (0.12)
+    const hasExtendedSessions = visibleCandles.some(c => c.session && c.session !== 'regular');
     if (hasExtendedSessions) {
       for (let i = 0; i < visibleCandles.length; i++) {
         const c = visibleCandles[i];
         const x = indexToX(i);
         const halfW = candleWidth / 2;
 
-        if (c.session === 'pre' || c.session === 'post') {
-          // Subtle warm dark-charcoal tint matching reference Image 2
-          ctx.fillStyle = 'rgba(38, 28, 20, 0.42)';
+        if (c.session === 'pre') {
+          // Pre-Market (4:00 AM - 9:30 AM ET): Orange background (at least 8% opacity)
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.12)';
+          ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+        } else if (c.session === 'post') {
+          // After-Market (4:00 PM - 8:00 PM ET): Blue background (at least 8% opacity)
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+          ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+        } else if (c.session === 'overnight') {
+          // Overnight / Night Market (8:00 PM - 4:00 AM ET): Purple background (at least 8% opacity)
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.12)';
           ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
         }
 
@@ -242,7 +279,7 @@ export const StockChart: React.FC<StockChartProps> = ({
             ctx.beginPath();
             ctx.lineWidth = 1;
             ctx.setLineDash([3, 3]);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
             ctx.moveTo(boundaryX, 0);
             ctx.lineTo(boundaryX, plotHeight);
             ctx.stroke();
@@ -672,9 +709,16 @@ export const StockChart: React.FC<StockChartProps> = ({
       const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)));
       const hovered = visibleCandles[candleIdx];
       if (hovered) {
-        const sessionPrefix = hovered.session === 'pre' ? 'PRE ' : hovered.session === 'post' ? 'POST ' : '';
-        const badgeBg = hovered.session === 'pre' ? '#0e7490' : hovered.session === 'post' ? '#6b21a8' : '#334155';
-        const badgeW = hovered.session ? 74 : 60;
+        const sessionPrefix = 
+          hovered.session === 'pre' ? 'PRE ' : 
+          hovered.session === 'post' ? 'POST ' : 
+          hovered.session === 'overnight' ? 'NIGHT ' : '';
+        const badgeBg = 
+          hovered.session === 'pre' ? '#ea580c' : // Orange
+          hovered.session === 'post' ? '#2563eb' : // Blue
+          hovered.session === 'overnight' ? '#9333ea' : // Purple
+          '#334155';
+        const badgeW = hovered.session ? (hovered.session === 'overnight' ? 82 : 74) : 60;
         ctx.fillStyle = badgeBg;
         ctx.fillRect(hoverPos.x - badgeW / 2, plotHeight, badgeW, 18);
         ctx.fillStyle = '#ffffff';
@@ -744,20 +788,29 @@ export const StockChart: React.FC<StockChartProps> = ({
 
       // Session Tag Badge if extended hours
       if (activeCandle.session) {
-        const sessionLabel = activeCandle.session === 'pre' ? 'PRE-MKT' : activeCandle.session === 'post' ? 'POST-MKT' : 'REGULAR';
-        const sessionBg = activeCandle.session === 'pre' ? '#0e7490' : activeCandle.session === 'post' ? '#6b21a8' : '#1e293b';
+        const sessionLabel = 
+          activeCandle.session === 'pre' ? 'PRE-MKT' : 
+          activeCandle.session === 'post' ? 'POST-MKT' : 
+          activeCandle.session === 'overnight' ? 'OVERNIGHT' : 
+          'REGULAR';
+        const sessionBg = 
+          activeCandle.session === 'pre' ? '#ea580c' : // Orange
+          activeCandle.session === 'post' ? '#2563eb' : // Blue
+          activeCandle.session === 'overnight' ? '#9333ea' : // Purple
+          '#1e293b';
         const sessionTextColor = activeCandle.session === 'regular' ? '#94a3b8' : '#ffffff';
+        const badgeW = activeCandle.session === 'overnight' ? 74 : 58;
         ctx.fillStyle = sessionBg;
-        ctx.fillRect(hudX, hudY - 1, 58, 14);
+        ctx.fillRect(hudX, hudY - 1, badgeW, 14);
         ctx.fillStyle = sessionTextColor;
         ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(sessionLabel, hudX + 29, hudY + 6);
+        ctx.fillText(sessionLabel, hudX + badgeW / 2, hudY + 6);
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
         ctx.font = '11px "JetBrains Mono", monospace';
-        hudX += 66;
+        hudX += badgeW + 8;
       }
 
       // Open label & value with 4 decimals
@@ -965,31 +1018,25 @@ export const StockChart: React.FC<StockChartProps> = ({
     panOffset
   ]);
 
-  // Handle Resize & Canvas Scaling
+  // Handle Resize & Canvas Scaling via ResizeObserver
   useEffect(() => {
-    const handleResize = () => {
-      const canvas = canvasRef.current;
-      const container = containerRef.current;
-      if (!canvas || !container) return;
+    const container = containerRef.current;
+    if (!container) return;
 
-      const rect = container.getBoundingClientRect();
-      const dpr = window.devicePixelRatio || 1;
+    const ro = new ResizeObserver(() => {
+      renderChart();
+    });
+    ro.observe(container);
 
-      canvas.width = rect.width * dpr;
-      canvas.height = rect.height * dpr;
-      canvas.style.width = `${rect.width}px`;
-      canvas.style.height = `${rect.height}px`;
-
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.scale(dpr, dpr);
-      }
+    const handleWindowResize = () => {
       renderChart();
     };
+    window.addEventListener('resize', handleWindowResize);
 
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
+    };
   }, [renderChart]);
 
   useEffect(() => {

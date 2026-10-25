@@ -19,11 +19,11 @@ export function generateCandlesForStock(
     switch (rangeKey) {
       case '1d':
         intervalMinutes = timeframe === '1M' ? 1 : 5;
-        barCount = intervalMinutes === 1 ? 960 : 192; // 16 hours of extended trading: Pre-Market (4am-9:30am), Regular (9:30am-4pm), After-Hours (4pm-8pm)
+        barCount = intervalMinutes === 1 ? 1440 : 288; // Full 24-hour continuous market: Overnight (8pm-4am), Pre-Market (4am-9:30am), Regular (9:30am-4pm), After-Market (4pm-8pm)
         break;
       case '5d':
         intervalMinutes = 5;
-        barCount = 960; // 5 days with complete Pre-Market, Regular, and Post-Market sessions
+        barCount = 1440; // 5 full 24-hour trading days with complete Overnight, Pre-Market, Regular, and After-Market sessions
         break;
       case '1mo':
         intervalMinutes = 60;
@@ -87,31 +87,37 @@ export function generateCandlesForStock(
     else if (timeframe === 'D') intervalMinutes = 1440;
   }
 
-  // Intraday 1D session: exactly 16 hours (04:00 AM to 20:00 PM ET)
+  // Intraday 1D session: exactly 24 hours continuous market (20:00 PM ET previous day to 20:00 PM ET)
   if (rangeKey === '1d' || (!rangeKey && (timeframe === '1M' || timeframe === '5M' || timeframe === '10M'))) {
     const stepMinutes = timeframe === '1M' ? 1 : (timeframe === '10M' ? 10 : (timeframe === '1H' ? 60 : 5));
-    const totalMinutes = 16 * 60; // 960 minutes
+    const totalMinutes = 24 * 60; // 1440 minutes = full 24 hours
     const barsCount = Math.floor(totalMinutes / stepMinutes);
 
-    // Anchor to today's date in Eastern Time at 04:00 AM EDT
-    // 04:00 AM EDT is 08:00 UTC (Oct 23, 2024 as shown in screenshot)
-    const baseAnchorMs = Date.UTC(2024, 9, 23, 8, 0, 0);
+    // Anchor to 20:00 EDT (00:00 UTC Oct 23, 2024) bridging into full 24h market
+    const baseAnchorMs = Date.UTC(2024, 9, 23, 0, 0, 0);
 
     let price = stock.ticker === 'AIOK' ? 2.22 : (stock.ticker === 'TORO' ? 3.68 : stock.price * (1 - (stock.changePercent / 100) * 0.85));
 
     for (let idx = 0; idx < barsCount; idx++) {
       const minuteOffset = idx * stepMinutes;
       const barTime = baseAnchorMs + minuteOffset * 60 * 1000;
-      const etTotalMinutes = 240 + minuteOffset; // Starts at 4:00 AM (240 minutes)
-      const etHour = Math.floor(etTotalMinutes / 60);
-      const etMinute = etTotalMinutes % 60;
+      // Start at 20:00 ET (1200 minutes from 00:00)
+      const etMinutesOfDay = (1200 + minuteOffset) % 1440;
+      const etHour = Math.floor(etMinutesOfDay / 60);
+      const etMinute = etMinutesOfDay % 60;
       const timeStr = `${String(etHour).padStart(2, '0')}:${String(etMinute).padStart(2, '0')}`;
 
-      // Session: Pre (4:00-9:30), Regular (9:30-16:00), Post (16:00-20:00)
-      let session: 'pre' | 'regular' | 'post' = 'regular';
-      if (etTotalMinutes < 570) {
+      // 24-Hour Continuous Market Sessions (Eastern Time):
+      // - Overnight Market: 20:00 to 04:00 ET (8:00 PM to 4:00 AM)
+      // - Pre-Market: 04:00 to 09:30 ET (4:00 AM to 9:30 AM)
+      // - Regular Market: 09:30 to 16:00 ET (9:30 AM to 4:00 PM)
+      // - After-Market: 16:00 to 20:00 ET (4:00 PM to 8:00 PM)
+      let session: 'pre' | 'regular' | 'post' | 'overnight' = 'regular';
+      if (etMinutesOfDay >= 1200 || etMinutesOfDay < 240) {
+        session = 'overnight';
+      } else if (etMinutesOfDay >= 240 && etMinutesOfDay < 570) {
         session = 'pre';
-      } else if (etTotalMinutes < 960) {
+      } else if (etMinutesOfDay >= 570 && etMinutesOfDay < 960) {
         session = 'regular';
       } else {
         session = 'post';
@@ -123,57 +129,68 @@ export function generateCandlesForStock(
 
       if (stock.ticker === 'AIOK') {
         // High-fidelity reproduction of Image 2 AIOK curve ($12.02, +182.82%, High $14.80, Low $2.20)
-        if (etTotalMinutes < 570) {
-          // Pre-Market (4:00 - 9:30 AM): Flat base between 2.20 and 2.45, low volume
+        if (minuteOffset < 480) {
+          // Overnight Market (8:00 PM - 4:00 AM): Quiet baseline trading around 2.20 - 2.25
+          changePct = (Math.random() - 0.49) * 0.004;
+          volume = Math.floor(600 + Math.random() * 2000);
+        } else if (minuteOffset < 810) {
+          // Pre-Market (4:00 AM - 9:30 AM): Base accumulation between 2.20 and 2.45
           changePct = (Math.random() - 0.49) * 0.006;
           volume = Math.floor(1000 + Math.random() * 4000);
-        } else if (etTotalMinutes === 570) {
+        } else if (minuteOffset === 810) {
           // 9:30 AM Opening bell breakout gap!
           changePct = 0.28 + Math.random() * 0.08;
           volume = Math.floor(450000 + Math.random() * 100000);
-        } else if (etTotalMinutes < 630) {
+        } else if (minuteOffset < 870) {
           // 9:31 - 10:30 AM: Massive surge running from $3 up to High of Day $14.80
-          const progress = (etTotalMinutes - 570) / 60;
+          const progress = (minuteOffset - 810) / 60;
           const targetPrice = 3.2 + progress * (14.80 - 3.2);
           const diff = (targetPrice - price) / price;
           changePct = diff * 0.4 + (Math.random() - 0.35) * 0.025;
           volume = Math.floor(120000 + Math.random() * 180000);
-        } else if (etTotalMinutes < 720) {
+        } else if (minuteOffset < 960) {
           // 10:30 AM - 12:00 PM: Natural pullback from $14.80 down to $9.80 - $10.40
-          const progress = (etTotalMinutes - 630) / 90;
+          const progress = (minuteOffset - 870) / 90;
           const targetPrice = 14.80 - progress * (14.80 - 10.10);
           const diff = (targetPrice - price) / price;
           changePct = diff * 0.25 + (Math.random() - 0.55) * 0.018;
           volume = Math.floor(45000 + Math.random() * 65000);
-        } else if (etTotalMinutes < 960) {
+        } else if (minuteOffset < 1200) {
           // 12:00 PM - 4:00 PM: Consolidation & climb from $10.10 toward $11.60
-          const progress = (etTotalMinutes - 720) / 240;
+          const progress = (minuteOffset - 960) / 240;
           const targetPrice = 10.10 + progress * (11.65 - 10.10);
           const diff = (targetPrice - price) / price;
           changePct = diff * 0.15 + (Math.random() - 0.48) * 0.012;
           volume = Math.floor(35000 + Math.random() * 55000);
         } else {
-          // 4:00 PM - 8:00 PM (After-Hours): Secondary rally settling right at $12.0200
-          const progress = (etTotalMinutes - 960) / 240;
+          // 4:00 PM - 8:00 PM (After-Market): Secondary rally settling right at $12.0200
+          const progress = (minuteOffset - 1200) / 240;
           const targetPrice = 11.65 + progress * (12.02 - 11.65);
           const diff = (targetPrice - price) / price;
           changePct = diff * 0.18 + (Math.random() - 0.5) * 0.008;
           volume = Math.floor(15000 + Math.random() * 30000);
         }
       } else if (stock.ticker === 'TORO') {
-        if (etTotalMinutes < 570) {
+        if (minuteOffset < 480) {
+          // Overnight
+          changePct = (Math.random() - 0.49) * 0.004;
+          volume = Math.floor(1200 + Math.random() * 3000);
+        } else if (minuteOffset < 810) {
+          // Pre-Market
           changePct = (Math.random() - 0.49) * 0.005;
           volume = Math.floor(2000 + Math.random() * 6000);
-        } else if (etTotalMinutes === 570) {
+        } else if (minuteOffset === 810) {
+          // 9:30 AM
           changePct = 0.12 + Math.random() * 0.04;
           volume = 280000;
-        } else if (etTotalMinutes < 630) {
+        } else if (minuteOffset < 870) {
           changePct = (Math.random() - 0.3) * 0.022;
           volume = Math.floor(35000 + Math.random() * 50000);
-        } else if (etTotalMinutes < 960) {
+        } else if (minuteOffset < 1200) {
           changePct = (Math.random() - 0.52) * 0.015;
           volume = Math.floor(12000 + Math.random() * 25000);
         } else {
+          // After-Market
           const diff = (4.28 - price) / price;
           changePct = diff * 0.12 + (Math.random() - 0.5) * 0.007;
           volume = Math.floor(8000 + Math.random() * 15000);
@@ -197,10 +214,10 @@ export function generateCandlesForStock(
       let low = Math.round((Math.min(open, close) - Math.random() * volatility) * 10000) / 10000;
 
       if (stock.ticker === 'AIOK') {
-        if (etTotalMinutes >= 620 && etTotalMinutes <= 635) {
+        if (minuteOffset >= 860 && minuteOffset <= 875) {
           high = Math.max(high, 14.8000);
         }
-        if (etTotalMinutes < 570) {
+        if (minuteOffset < 810) {
           low = Math.max(2.2000, low);
         }
       }
@@ -222,13 +239,13 @@ export function generateCandlesForStock(
     return candles;
   }
 
-  // 5D range: 5 distinct trading days with full Pre (4:00-9:30), Reg (9:30-16:00), Post (16:00-20:00)
+  // 5D range: 5 distinct trading days with full 24-hour continuous market (Overnight, Pre, Reg, Post)
   if (rangeKey === '5d') {
     const stepMinutes = 5;
-    const minutesPerDay = 16 * 60; // 960 mins
-    const barsPerDay = Math.floor(minutesPerDay / stepMinutes); // 192 bars
+    const minutesPerDay = 24 * 60; // 1440 mins
+    const barsPerDay = Math.floor(minutesPerDay / stepMinutes); // 288 bars
     const days = 5;
-    const baseAnchorMs = Date.UTC(2024, 9, 17, 8, 0, 0); // Start 5 weekdays earlier
+    const baseAnchorMs = Date.UTC(2024, 9, 18, 0, 0, 0); // 5 trading days earlier at 20:00 EDT
 
     let price = stock.price * (1 - (stock.changePercent / 100) * 0.7);
 
@@ -237,14 +254,15 @@ export function generateCandlesForStock(
       for (let b = 0; b < barsPerDay; b++) {
         const minuteOffset = b * stepMinutes;
         const barTime = dayStartMs + minuteOffset * 60 * 1000;
-        const etTotalMinutes = 240 + minuteOffset;
-        const etHour = Math.floor(etTotalMinutes / 60);
-        const etMinute = etTotalMinutes % 60;
+        const etMinutesOfDay = (1200 + minuteOffset) % 1440;
+        const etHour = Math.floor(etMinutesOfDay / 60);
+        const etMinute = etMinutesOfDay % 60;
         const timeStr = `${String(etHour).padStart(2, '0')}:${String(etMinute).padStart(2, '0')}`;
 
-        let session: 'pre' | 'regular' | 'post' = 'regular';
-        if (etTotalMinutes < 570) session = 'pre';
-        else if (etTotalMinutes < 960) session = 'regular';
+        let session: 'pre' | 'regular' | 'post' | 'overnight' = 'regular';
+        if (etMinutesOfDay >= 1200 || etMinutesOfDay < 240) session = 'overnight';
+        else if (etMinutesOfDay >= 240 && etMinutesOfDay < 570) session = 'pre';
+        else if (etMinutesOfDay >= 570 && etMinutesOfDay < 960) session = 'regular';
         else session = 'post';
 
         const open = price;

@@ -22,7 +22,7 @@ export type ChartType = 'candles' | 'hollow' | 'line' | 'area';
 
 export type DrawingTool = 'crosshair' | 'pan' | 'trendline' | 'horizontal' | 'fibonacci' | 'brush' | 'ruler' | 'select' | null;
 
-export type MarketSession = 'pre' | 'regular' | 'post';
+export type MarketSession = 'pre' | 'regular' | 'post' | 'overnight';
 
 export interface Candle {
   time: number; // Unix timestamp in ms
@@ -32,7 +32,7 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
-  session?: MarketSession; // Pre-market (4:00-9:30 ET), Regular (9:30-16:00 ET), Post/After-market (16:00-20:00 ET)
+  session?: MarketSession; // Pre-market (4:00-9:30 ET), Regular (9:30-16:00 ET), Post/After-market (16:00-20:00 ET), Overnight (20:00-4:00 ET)
 }
 
 export interface IndicatorVisibility {
