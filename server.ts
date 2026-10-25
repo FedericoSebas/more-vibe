@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import { createServer as createViteServer } from 'vite';
 import path from 'path';
@@ -115,13 +116,18 @@ async function fetchYahooChart(symbol: string, timeframe = '5M') {
       timeStr = `${month} ${day} ${hours}:00`;
     }
 
+    const cleanPrice = (val: number | null | undefined): number => {
+      if (val === null || val === undefined || !Number.isFinite(val)) return 0;
+      return Math.round(val * 10000) / 10000;
+    };
+
     rawBars.push({
       time: timeMs,
       timeStr,
-      open: Number(o.toFixed(2)),
-      high: Number(h.toFixed(2)),
-      low: Number(l.toFixed(2)),
-      close: Number(c.toFixed(2)),
+      open: cleanPrice(o),
+      high: cleanPrice(h),
+      low: cleanPrice(l),
+      close: cleanPrice(c),
       volume: Math.floor(v)
     });
   }
@@ -142,8 +148,8 @@ async function fetchYahooChart(symbol: string, timeframe = '5M') {
           time: b1.time,
           timeStr: b1.timeStr,
           open: b1.open,
-          high: Number(Math.max(b1.high, b2.high).toFixed(2)),
-          low: Number(Math.min(b1.low, b2.low).toFixed(2)),
+          high: Math.round(Math.max(b1.high, b2.high) * 10000) / 10000,
+          low: Math.round(Math.min(b1.low, b2.low) * 10000) / 10000,
           close: b2.close,
           volume: b1.volume + b2.volume
         });
@@ -168,8 +174,8 @@ async function fetchYahooChart(symbol: string, timeframe = '5M') {
         time: b1.time,
         timeStr: b1.timeStr,
         open: b1.open,
-        high: Number(h.toFixed(2)),
-        low: Number(l.toFixed(2)),
+        high: Math.round(h * 10000) / 10000,
+        low: Math.round(l * 10000) / 10000,
         close: bLast.close,
         volume: v
       });
@@ -188,16 +194,16 @@ async function fetchYahooChart(symbol: string, timeframe = '5M') {
       symbol: meta.symbol || symbol,
       currency: meta.currency || 'USD',
       exchange: meta.fullExchangeName || meta.exchangeName || 'NASDAQ',
-      price: Number(currentPrice.toFixed(2)),
-      change: Number(change.toFixed(2)),
+      price: Math.round(currentPrice * 10000) / 10000,
+      change: Math.round(change * 10000) / 10000,
       changePercent: Number(changePercent.toFixed(2)),
-      prevClose: Number(prevClose.toFixed(2)),
-      open: Number((meta.regularMarketOpen || (candles[0]?.open ?? currentPrice)).toFixed(2)),
-      high: Number((meta.regularMarketDayHigh || meta.dayHigh || currentPrice).toFixed(2)),
-      low: Number((meta.regularMarketDayLow || meta.dayLow || currentPrice).toFixed(2)),
+      prevClose: Math.round(prevClose * 10000) / 10000,
+      open: Math.round((meta.regularMarketOpen || (candles[0]?.open ?? currentPrice)) * 10000) / 10000,
+      high: Math.round((meta.regularMarketDayHigh || meta.dayHigh || currentPrice) * 10000) / 10000,
+      low: Math.round((meta.regularMarketDayLow || meta.dayLow || currentPrice) * 10000) / 10000,
       volume: meta.regularMarketVolume || meta.dayVolume || (candles.reduce((acc, c) => acc + c.volume, 0)),
-      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh || null,
-      fiftyTwoWeekLow: meta.fiftyTwoWeekLow || null
+      fiftyTwoWeekHigh: meta.fiftyTwoWeekHigh ? Math.round(meta.fiftyTwoWeekHigh * 10000) / 10000 : null,
+      fiftyTwoWeekLow: meta.fiftyTwoWeekLow ? Math.round(meta.fiftyTwoWeekLow * 10000) / 10000 : null
     },
     candles
   };
@@ -239,30 +245,44 @@ app.get('/api/stock/scanner', async (_req: Request, res: Response) => {
       .map(q => {
         const item = q.value;
         const candles = item.candles || [];
-        const last = candles[candles.length - 1];
-        const first = candles[0];
-        const m1 = candles[candles.length - 2] ? ((last.close - candles[candles.length - 2].close) / candles[candles.length - 2].close) * 100 : 0;
-        const m5 = candles[candles.length - 3] ? ((last.close - candles[candles.length - 3].close) / candles[candles.length - 3].close) * 100 : 0;
-        const m15 = candles[candles.length - 5] ? ((last.close - candles[candles.length - 5].close) / candles[candles.length - 5].close) * 100 : 0;
-        const h1 = candles[candles.length - 13] ? ((last.close - candles[candles.length - 13].close) / candles[candles.length - 13].close) * 100 : 0;
-        const h4 = candles[candles.length - 49] ? ((last.close - candles[candles.length - 49].close) / candles[candles.length - 49].close) * 100 : 0;
+        const last = candles.length > 0 ? candles[candles.length - 1] : null;
+        const first = candles.length > 0 ? candles[0] : null;
+        const currentPrice = item.meta?.price ?? (last ? last.close : 0);
+
+        const calcChange = (idxOffset: number): number => {
+          if (!last || candles.length <= idxOffset) return 0;
+          const ref = candles[candles.length - 1 - idxOffset];
+          if (!ref || !ref.close) return 0;
+          const diff = ((last.close - ref.close) / ref.close) * 100;
+          return Number.isFinite(diff) ? Number(diff.toFixed(2)) : 0;
+        };
+
+        const m1 = calcChange(1);
+        const m5 = calcChange(2);
+        const m15 = calcChange(4);
+        const h1 = calcChange(12);
+        const h4 = calcChange(48);
+
+        const openPercent = first && first.open && first.open > 0
+          ? Number((((currentPrice - first.open) / first.open) * 100).toFixed(2))
+          : 0;
 
         return {
           ticker: item.ticker,
-          price: item.meta.price,
-          change: item.meta.change,
-          changePercent: item.meta.changePercent,
-          openPercent: first ? Number((((item.meta.price - first.open) / first.open) * 100).toFixed(2)) : 0,
-          volume: item.meta.volume,
-          high: item.meta.high,
-          low: item.meta.low,
-          open: item.meta.open,
-          prevClose: item.meta.prevClose,
-          m1Change: Number(m1.toFixed(2)),
-          m5Change: Number(m5.toFixed(2)),
-          m15Change: Number(m15.toFixed(2)),
-          h1Change: Number(h1.toFixed(2)),
-          h4Change: Number(h4.toFixed(2)),
+          price: Number.isFinite(item.meta?.price) ? item.meta.price : currentPrice || 0,
+          change: Number.isFinite(item.meta?.change) ? item.meta.change : 0,
+          changePercent: Number.isFinite(item.meta?.changePercent) ? item.meta.changePercent : 0,
+          openPercent: Number.isFinite(openPercent) ? openPercent : 0,
+          volume: Number.isFinite(item.meta?.volume) ? item.meta.volume : 0,
+          high: Number.isFinite(item.meta?.high) ? item.meta.high : currentPrice || 0,
+          low: Number.isFinite(item.meta?.low) ? item.meta.low : currentPrice || 0,
+          open: Number.isFinite(item.meta?.open) ? item.meta.open : (first?.open ?? currentPrice) || 0,
+          prevClose: Number.isFinite(item.meta?.prevClose) ? item.meta.prevClose : (first?.open ?? currentPrice) || 0,
+          m1Change: m1,
+          m5Change: m5,
+          m15Change: m15,
+          h1Change: h1,
+          h4Change: h4,
         };
       });
 

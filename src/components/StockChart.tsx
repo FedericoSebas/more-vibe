@@ -67,7 +67,6 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   // Mouse / Crosshair state
   const [hoverPos, setHoverPos] = useState<{ x: number; y: number } | null>(null);
-  const [hoverCandle, setHoverCandle] = useState<Candle | null>(null);
   const [cursorStyle, setCursorStyle] = useState<string>('crosshair');
 
   // Drawing in progress
@@ -81,11 +80,11 @@ export const StockChart: React.FC<StockChartProps> = ({
   const volumeProfileData = useMemo(() => calculateVolumeProfile(candles, 45), [candles]);
 
   // Layout metrics
-  const rightAxisWidth = 66;
+  const rightAxisWidth = 74;
   const bottomAxisHeight = 26;
 
   // Viewport calculation
-  const defaultVisibleBars = Math.max(25, Math.min(220, Math.round(90 / zoomLevel)));
+  const defaultVisibleBars = Math.max(10, Math.min(candles.length || 360, Math.round(90 / zoomLevel)));
   const totalCandles = candles.length;
   
   // Constrain pan offset
@@ -168,34 +167,52 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     // 2. Draw Axis Backgrounds
     // Right Y-axis background
-    const isOverYAxis = hoverPos && hoverPos.x >= plotWidth && hoverPos.y < plotHeight;
+    const isOverYAxis = (hoverPos && hoverPos.x >= plotWidth && hoverPos.y < plotHeight) || dragMode === 'scale-price';
     const isDraggingY = dragMode === 'scale-price';
-    ctx.fillStyle = isDraggingY ? '#141d2c' : isOverYAxis ? '#111724' : '#0c1018';
+    ctx.fillStyle = isDraggingY ? '#172236' : isOverYAxis ? '#121a29' : '#0c1018';
     ctx.fillRect(plotWidth, 0, rightAxisWidth, plotHeight);
 
     // Bottom X-axis background
-    const isOverXAxis = hoverPos && hoverPos.y >= plotHeight && hoverPos.x < plotWidth;
+    const isOverXAxis = (hoverPos && hoverPos.y >= plotHeight && hoverPos.x < plotWidth) || dragMode === 'scale-time';
     const isDraggingX = dragMode === 'scale-time';
-    ctx.fillStyle = isDraggingX ? '#141d2c' : isOverXAxis ? '#111724' : '#0c1018';
+    ctx.fillStyle = isDraggingX ? '#172236' : isOverXAxis ? '#121a29' : '#0c1018';
     ctx.fillRect(0, plotHeight, plotWidth, bottomAxisHeight);
 
     // Corner box (Auto scale button area)
     ctx.fillStyle = '#0e131d';
     ctx.fillRect(plotWidth, plotHeight, rightAxisWidth, bottomAxisHeight);
 
-    // Axis separator border lines
-    ctx.strokeStyle = isDraggingY || isOverYAxis ? '#38bdf8' : '#1a2333';
-    ctx.lineWidth = 1;
+    // Axis separator border lines with glowing highlight on hover/drag
+    ctx.strokeStyle = isDraggingY ? '#38bdf8' : isOverYAxis ? 'rgba(56, 189, 248, 0.6)' : '#1a2333';
+    ctx.lineWidth = isDraggingY ? 1.5 : 1;
     ctx.beginPath();
     ctx.moveTo(plotWidth, 0);
     ctx.lineTo(plotWidth, height);
     ctx.stroke();
 
-    ctx.strokeStyle = isDraggingX || isOverXAxis ? '#38bdf8' : '#1a2333';
+    ctx.strokeStyle = isDraggingX ? '#38bdf8' : isOverXAxis ? 'rgba(56, 189, 248, 0.6)' : '#1a2333';
+    ctx.lineWidth = isDraggingX ? 1.5 : 1;
     ctx.beginPath();
     ctx.moveTo(0, plotHeight);
     ctx.lineTo(width, plotHeight);
     ctx.stroke();
+
+    // Subtle stretch cues on axes
+    if (isOverYAxis || isDraggingY) {
+      ctx.fillStyle = isDraggingY ? '#38bdf8' : '#64748b';
+      ctx.font = 'bold 9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('▲', plotWidth + rightAxisWidth / 2, 10);
+      ctx.fillText('↕ DRAG', plotWidth + rightAxisWidth / 2, 22);
+      ctx.fillText('▼', plotWidth + rightAxisWidth / 2, plotHeight - 10);
+    }
+
+    if (isOverXAxis || isDraggingX) {
+      ctx.fillStyle = isDraggingX ? '#38bdf8' : '#64748b';
+      ctx.font = 'bold 9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText('◀ ↔ DRAG TIME ▶', 12, plotHeight + 16);
+    }
 
     // 3. Draw Horizontal Grid Lines & Price Labels
     const gridSteps = 8;
@@ -219,7 +236,7 @@ export const StockChart: React.FC<StockChartProps> = ({
 
       // Price label on right axis
       ctx.fillStyle = isOverYAxis || isDraggingY ? '#94a3b8' : '#64748b';
-      ctx.fillText(price.toFixed(2), plotWidth + 6, y);
+      ctx.fillText(price.toFixed(4), plotWidth + 6, y);
     }
 
     // 4. Draw Vertical Grid Lines & Time Labels
@@ -407,10 +424,10 @@ export const StockChart: React.FC<StockChartProps> = ({
       ctx.fillStyle = '#a855f7';
       ctx.fillRect(plotWidth, liveY - 10, rightAxisWidth, 20);
       ctx.fillStyle = '#ffffff';
-      ctx.font = 'bold 11px "JetBrains Mono", monospace';
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(stock.price.toFixed(2), plotWidth + rightAxisWidth / 2, liveY);
+      ctx.fillText(stock.price.toFixed(4), plotWidth + rightAxisWidth / 2, liveY);
     }
 
     // EMA indicator tag on right axis if enabled
@@ -419,12 +436,12 @@ export const StockChart: React.FC<StockChartProps> = ({
       const emaY = priceToY(lastEma);
       if (emaY >= 0 && emaY <= plotHeight) {
         ctx.fillStyle = '#eab308';
-        ctx.fillRect(plotWidth, emaY - 8, rightAxisWidth - 10, 16);
+        ctx.fillRect(plotWidth, emaY - 8, rightAxisWidth - 6, 16);
         ctx.fillStyle = '#0f172a';
-        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(lastEma.toFixed(2), plotWidth + (rightAxisWidth - 10) / 2, emaY);
+        ctx.fillText(lastEma.toFixed(4), plotWidth + (rightAxisWidth - 6) / 2, emaY);
       }
     }
 
@@ -505,10 +522,10 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
 
         ctx.fillStyle = '#0f172a';
-        ctx.fillRect(x2 + 4, y2 - 14, 110, 28);
+        ctx.fillRect(x2 + 4, y2 - 14, 130, 28);
         ctx.fillStyle = '#ffffff';
         ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.fillText(`${deltaPrice >= 0 ? '+' : ''}${deltaPrice.toFixed(2)} (${deltaPct.toFixed(2)}%)`, x2 + 8, y2 - 2);
+        ctx.fillText(`${deltaPrice >= 0 ? '+' : ''}${deltaPrice.toFixed(4)} (${deltaPct.toFixed(2)}%)`, x2 + 8, y2 - 2);
         ctx.fillText(`${barsCount} bars`, x2 + 8, y2 + 10);
       }
     }
@@ -533,14 +550,14 @@ export const StockChart: React.FC<StockChartProps> = ({
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Right axis price badge for crosshair
+      // Right axis price badge for crosshair (4 decimals)
       ctx.fillStyle = '#334155';
       ctx.fillRect(plotWidth, hoverPos.y - 9, rightAxisWidth, 18);
       ctx.fillStyle = '#ffffff';
       ctx.font = '10px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(cursorPrice.toFixed(2), plotWidth + rightAxisWidth / 2, hoverPos.y);
+      ctx.fillText(cursorPrice.toFixed(4), plotWidth + rightAxisWidth / 2, hoverPos.y);
 
       // Bottom axis time badge for crosshair
       const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)));
@@ -568,14 +585,30 @@ export const StockChart: React.FC<StockChartProps> = ({
     ctx.fillStyle = isCustomScale ? '#38bdf8' : '#64748b';
     ctx.fillText('AUTO', plotWidth + rightAxisWidth / 2, plotHeight + bottomAxisHeight / 2);
 
-    // 13. Top Chart HUD Metrics
-    const activeCandle = hoverCandle || visibleCandles[visibleCandles.length - 1];
+    // 13. Top Chart HUD Metrics & Exact Bar Label
+    const isHoveringPlot = hoverPos && hoverPos.x >= 0 && hoverPos.x < plotWidth && hoverPos.y >= 0 && hoverPos.y < plotHeight;
+    const hoveredCandleIndex = isHoveringPlot
+      ? Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)))
+      : -1;
+
+    const activeCandle = hoveredCandleIndex >= 0 
+      ? visibleCandles[hoveredCandleIndex] 
+      : visibleCandles[visibleCandles.length - 1];
+
+    const activeCandleGlobalIdx = hoveredCandleIndex >= 0
+      ? startIndex + hoveredCandleIndex
+      : candles.length - 1;
+
     if (activeCandle) {
+      const barChange = activeCandle.close - activeCandle.open;
+      const barChangePct = activeCandle.open > 0 ? (barChange / activeCandle.open) * 100 : 0;
+      const isBarUp = activeCandle.close >= activeCandle.open;
+      const barThemeColor = isBarUp ? '#22c55e' : '#ef4444';
+
       ctx.textAlign = 'left';
       ctx.textBaseline = 'top';
       ctx.font = '11px "JetBrains Mono", monospace';
 
-      ctx.fillStyle = '#94a3b8';
       let hudX = 12;
       const hudY = 8;
 
@@ -590,103 +623,193 @@ export const StockChart: React.FC<StockChartProps> = ({
         hudTime = `${months[dObj.getMonth()]} ${dObj.getDate().toString().padStart(2, '0')} ${hours}:${mins}`;
       }
       const timeTag = `${hudTime} [${timeframe}]`;
+      ctx.fillStyle = hoveredCandleIndex >= 0 ? '#38bdf8' : '#94a3b8';
       ctx.fillText(timeTag, hudX, hudY);
       hudX += Math.max(140, Math.round(ctx.measureText(timeTag).width + 12));
 
-      ctx.fillStyle = '#22c55e';
+      // Open label & value with 4 decimals
+      ctx.fillStyle = '#64748b';
       ctx.fillText(`O`, hudX, hudY);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(` ${activeCandle.open.toFixed(2)}`, hudX + 10, hudY);
-      hudX += 55;
+      ctx.fillStyle = barThemeColor;
+      ctx.fillText(` ${activeCandle.open.toFixed(4)}`, hudX + 10, hudY);
+      hudX += 72;
 
-      ctx.fillStyle = '#22c55e';
+      // High label & value with 4 decimals
+      ctx.fillStyle = '#64748b';
       ctx.fillText(`H`, hudX, hudY);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(` ${activeCandle.high.toFixed(2)}`, hudX + 10, hudY);
-      hudX += 55;
-
-      ctx.fillStyle = '#ef4444';
-      ctx.fillText(`L`, hudX, hudY);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(` ${activeCandle.low.toFixed(2)}`, hudX + 10, hudY);
-      hudX += 55;
-
       ctx.fillStyle = '#22c55e';
+      ctx.fillText(` ${activeCandle.high.toFixed(4)}`, hudX + 10, hudY);
+      hudX += 72;
+
+      // Low label & value with 4 decimals
+      ctx.fillStyle = '#64748b';
+      ctx.fillText(`L`, hudX, hudY);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillText(` ${activeCandle.low.toFixed(4)}`, hudX + 10, hudY);
+      hudX += 72;
+
+      // Close label & value with 4 decimals
+      ctx.fillStyle = '#64748b';
       ctx.fillText(`C`, hudX, hudY);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(` ${activeCandle.close.toFixed(2)}`, hudX + 10, hudY);
-      hudX += 55;
+      ctx.fillStyle = barThemeColor;
+      ctx.fillText(` ${activeCandle.close.toFixed(4)}`, hudX + 10, hudY);
+      hudX += 72;
 
-      ctx.fillStyle = '#94a3b8';
+      // Bar Change (Diff between this bar's close and open)
+      ctx.fillStyle = barThemeColor;
+      const barDiffStr = `${isBarUp ? '+' : ''}${barChange.toFixed(4)} (${isBarUp ? '+' : ''}${barChangePct.toFixed(2)}%)`;
+      ctx.fillText(barDiffStr, hudX, hudY);
+      hudX += Math.round(ctx.measureText(barDiffStr).width + 14);
+
+      // Volume for this bar
+      ctx.fillStyle = '#64748b';
       ctx.fillText(`Vol `, hudX, hudY);
-      ctx.fillStyle = '#e2e8f0';
-      ctx.fillText(`${(activeCandle.volume / 1000).toFixed(2)}K`, hudX + 28, hudY);
-      hudX += 85;
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(`${formatCompactVolume(activeCandle.volume)}`, hudX + 26, hudY);
+      hudX += 75;
 
-      ctx.fillStyle = '#94a3b8';
+      ctx.fillStyle = '#64748b';
       ctx.fillText(`Vol(d) `, hudX, hudY);
       ctx.fillStyle = '#22c55e';
-      ctx.fillText(formatCompactVolume(stock.volume), hudX + 45, hudY);
+      ctx.fillText(formatCompactVolume(stock.volume), hudX + 42, hudY);
 
-      // Row 2: Indicators readout
+      // Row 2: Indicators readout for this specific bar with 4 decimals
       const hudY2 = hudY + 16;
       let indX = 12;
 
       if (indicators.ema9) {
         ctx.fillStyle = '#eab308';
-        const lastVal = ema9Data[candles.length - 1] ?? 4.33;
-        ctx.fillText(`EMA 9 · ${Number(lastVal).toFixed(2)}`, indX, hudY2);
-        indX += 100;
+        const val = ema9Data[activeCandleGlobalIdx];
+        ctx.fillText(`EMA 9 · ${val !== null && val !== undefined ? Number(val).toFixed(4) : 'N/A'}`, indX, hudY2);
+        indX += 120;
       }
 
       if (indicators.sma20) {
         ctx.fillStyle = '#3b82f6';
-        const lastVal = sma20Data[candles.length - 1] ?? 4.32;
-        ctx.fillText(`SMA 20 · ${Number(lastVal).toFixed(2)}`, indX, hudY2);
-        indX += 105;
+        const val = sma20Data[activeCandleGlobalIdx];
+        ctx.fillText(`SMA 20 · ${val !== null && val !== undefined ? Number(val).toFixed(4) : 'N/A'}`, indX, hudY2);
+        indX += 125;
       }
 
       if (indicators.sma200) {
         ctx.fillStyle = '#a855f7';
-        const lastVal = sma200Data[candles.length - 1] ?? 4.03;
-        ctx.fillText(`SMA 200 · ${Number(lastVal).toFixed(2)}`, indX, hudY2);
-        indX += 115;
+        const val = sma200Data[activeCandleGlobalIdx];
+        ctx.fillText(`SMA 200 · ${val !== null && val !== undefined ? Number(val).toFixed(4) : 'N/A'}`, indX, hudY2);
+        indX += 135;
       }
 
       if (indicators.vwap) {
         ctx.fillStyle = '#cbd5e1';
-        const lastVal = vwapData[candles.length - 1] ?? 4.26;
-        ctx.fillText(`VWAP · ${Number(lastVal).toFixed(2)}`, indX, hudY2);
-        indX += 95;
+        const val = vwapData[activeCandleGlobalIdx];
+        ctx.fillText(`VWAP · ${val !== null && val !== undefined ? Number(val).toFixed(4) : 'N/A'}`, indX, hudY2);
+        indX += 120;
       }
 
       if (indicators.volumeProfile) {
         ctx.fillStyle = '#22c55e';
         ctx.fillText(`VP 50`, indX, hudY2);
       }
+
+      // 14. Floating On-Bar Label / Tooltip directly above the hovered visual bar
+      if (hoveredCandleIndex >= 0 && activeCandle) {
+        const barX = indexToX(hoveredCandleIndex);
+        const highY = priceToY(activeCandle.high);
+        const lowY = priceToY(activeCandle.low);
+
+        const cardW = 236;
+        const cardH = 46;
+        let cardX = barX - cardW / 2;
+        cardX = Math.max(10, Math.min(plotWidth - cardW - 10, cardX));
+        
+        let cardY = highY - cardH - 12;
+        if (cardY < 40) {
+          cardY = Math.min(plotHeight - cardH - 10, lowY + 12);
+        }
+
+        // Card background & glowing border
+        ctx.fillStyle = 'rgba(11, 16, 26, 0.94)';
+        ctx.fillRect(cardX, cardY, cardW, cardH);
+        ctx.strokeStyle = barThemeColor;
+        ctx.lineWidth = 1;
+        ctx.strokeRect(cardX, cardY, cardW, cardH);
+
+        // Header: Time & Change
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = '#94a3b8';
+        ctx.fillText(activeCandle.timeStr, cardX + 8, cardY + 6);
+
+        ctx.textAlign = 'right';
+        ctx.fillStyle = barThemeColor;
+        ctx.fillText(barDiffStr, cardX + cardW - 8, cardY + 6);
+
+        // OHLC values with 4 decimals
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        let rowX = cardX + 8;
+        const rowY = cardY + 24;
+
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(`O:`, rowX, rowY);
+        ctx.fillStyle = barThemeColor;
+        ctx.fillText(activeCandle.open.toFixed(4), rowX + 13, rowY);
+        rowX += 55;
+
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(`H:`, rowX, rowY);
+        ctx.fillStyle = '#22c55e';
+        ctx.fillText(activeCandle.high.toFixed(4), rowX + 13, rowY);
+        rowX += 55;
+
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(`L:`, rowX, rowY);
+        ctx.fillStyle = '#ef4444';
+        ctx.fillText(activeCandle.low.toFixed(4), rowX + 13, rowY);
+        rowX += 55;
+
+        ctx.fillStyle = '#64748b';
+        ctx.fillText(`C:`, rowX, rowY);
+        ctx.fillStyle = barThemeColor;
+        ctx.fillText(activeCandle.close.toFixed(4), rowX + 13, rowY);
+
+        // Also draw exact Close Price Tag on right Y-Axis
+        const closeY = priceToY(activeCandle.close);
+        ctx.fillStyle = barThemeColor;
+        ctx.fillRect(plotWidth, closeY - 8, rightAxisWidth, 16);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(activeCandle.close.toFixed(4), plotWidth + rightAxisWidth / 2, closeY);
+      }
     }
 
     // 14. Helper tooltip overlay when dragging price or time scale
     if (dragMode === 'scale-price') {
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillRect(plotWidth - 140, 20, 130, 24);
+      const pct = Math.round(100 / priceScaleFactor);
+      ctx.fillStyle = 'rgba(11, 16, 26, 0.94)';
+      ctx.fillRect(plotWidth - 175, 20, 165, 26);
       ctx.strokeStyle = '#38bdf8';
-      ctx.strokeRect(plotWidth - 140, 20, 130, 24);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(plotWidth - 175, 20, 165, 26);
       ctx.fillStyle = '#38bdf8';
-      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`Price: ${(100 / priceScaleFactor).toFixed(0)}%`, plotWidth - 75, 32);
+      ctx.fillText(`↕ Price Scale: ${pct}% (Drag UP/DN)`, plotWidth - 92, 33);
     } else if (dragMode === 'scale-time') {
-      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-      ctx.fillRect(plotWidth / 2 - 65, plotHeight - 34, 130, 24);
+      const pct = Math.round(zoomLevel * 100);
+      ctx.fillStyle = 'rgba(11, 16, 26, 0.94)';
+      ctx.fillRect(plotWidth / 2 - 110, plotHeight - 36, 220, 26);
       ctx.strokeStyle = '#38bdf8';
-      ctx.strokeRect(plotWidth / 2 - 65, plotHeight - 34, 130, 24);
+      ctx.lineWidth = 1;
+      ctx.strokeRect(plotWidth / 2 - 110, plotHeight - 36, 220, 26);
       ctx.fillStyle = '#38bdf8';
-      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText(`Time: ${(zoomLevel * 100).toFixed(0)}%`, plotWidth / 2, plotHeight - 22);
+      ctx.fillText(`↔ Time: ${pct}% (${visibleCandles.length} bars • Drag L/R)`, plotWidth / 2, plotHeight - 23);
     }
 
   }, [
@@ -694,7 +817,6 @@ export const StockChart: React.FC<StockChartProps> = ({
     indicators, 
     stock, 
     hoverPos, 
-    hoverCandle, 
     chartType, 
     drawings, 
     ema9Data, 
@@ -883,7 +1005,118 @@ export const StockChart: React.FC<StockChartProps> = ({
     setCursorStyle('grabbing');
   };
 
-  // Mouse Move Event Handler
+  // Direct stretch / contract button handlers
+  const handleStretchPrice = () => {
+    setPriceScaleFactor(prev => Math.max(0.04, prev * 0.78));
+  };
+  const handleContractPrice = () => {
+    setPriceScaleFactor(prev => Math.min(15.0, prev * 1.25));
+  };
+  const handleStretchTime = () => {
+    onZoomChange(Math.min(6.5, zoomLevel * 1.25));
+  };
+  const handleContractTime = () => {
+    onZoomChange(Math.max(0.18, zoomLevel * 0.8));
+  };
+
+  // Window-level mouse move & mouse up listeners for smooth axis dragging
+  useEffect(() => {
+    if (dragMode === 'none') return;
+
+    const originalCursor = document.body.style.cursor;
+    if (dragMode === 'scale-price') document.body.style.cursor = 'ns-resize';
+    else if (dragMode === 'scale-time') document.body.style.cursor = 'ew-resize';
+    else if (dragMode === 'pan-chart') document.body.style.cursor = 'grabbing';
+
+    const onWindowMouseMove = (e: MouseEvent) => {
+      // 1. Dragging Right Price Axis: Vertical stretch/contract
+      if (dragMode === 'scale-price') {
+        const deltaY = e.clientY - dragStartPos.y;
+        // Drag UP (deltaY < 0): stretch price scale (factor < 1 -> priceScaleFactor gets smaller -> fewer price units per screen -> taller candles)
+        // Drag DOWN (deltaY > 0): contract price scale (factor > 1 -> priceScaleFactor gets larger -> more price units per screen -> shorter candles)
+        const factor = Math.exp(deltaY * 0.0065);
+        const nextScale = Math.max(0.04, Math.min(15.0, startPriceScale * factor));
+        setPriceScaleFactor(nextScale);
+        return;
+      }
+
+      // 2. Dragging Bottom Time Axis: Horizontal stretch/contract
+      if (dragMode === 'scale-time') {
+        const deltaX = e.clientX - dragStartPos.x;
+        // Drag RIGHT (deltaX > 0): stretch time scale (factor > 1 -> zoomLevel increases -> fewer bars -> wider candles)
+        // Drag LEFT (deltaX < 0): contract time scale (factor < 1 -> zoomLevel decreases -> more bars -> narrower candles)
+        const factor = Math.exp(deltaX * 0.0055);
+        const nextZoom = Math.max(0.18, Math.min(6.5, startZoom * factor));
+        onZoomChange(nextZoom);
+        return;
+      }
+
+      // 3. Dragging Main Chart: 2D Panning (X: time pan, Y: price pan)
+      if (dragMode === 'pan-chart') {
+        const deltaX = e.clientX - dragStartPos.x;
+        const deltaY = e.clientY - dragStartPos.y;
+
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        const rect = canvas.getBoundingClientRect();
+        const plotWidth = rect.width - rightAxisWidth;
+        const plotHeight = rect.height - bottomAxisHeight;
+
+        const candleWidth = plotWidth / (visibleCandles.length || 1);
+        const candleDelta = Math.round(deltaX / (candleWidth * 1.1));
+        if (candleDelta !== 0) {
+          const nextPan = invertDrag 
+            ? startPanOffset + candleDelta 
+            : startPanOffset - candleDelta;
+          setPanOffset(Math.max(0, Math.min(maxPan, nextPan)));
+        }
+
+        // Vertical price pan
+        let minP = Infinity, maxP = -Infinity;
+        for (const c of visibleCandles) {
+          if (c.low < minP) minP = c.low;
+          if (c.high > maxP) maxP = c.high;
+        }
+        const rawRange = Math.max(0.02, maxP - minP);
+        const bufferedRange = rawRange * 1.12 * priceScaleFactor;
+        const priceDelta = (deltaY / (plotHeight - plotHeight * 0.16)) * bufferedRange;
+
+        const nextVert = invertDrag
+          ? startVerticalPan + priceDelta
+          : startVerticalPan - priceDelta;
+        setVerticalPanOffset(nextVert);
+      }
+    };
+
+    const onWindowMouseUp = () => {
+      setDragMode('none');
+      document.body.style.cursor = originalCursor;
+    };
+
+    window.addEventListener('mousemove', onWindowMouseMove);
+    window.addEventListener('mouseup', onWindowMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onWindowMouseMove);
+      window.removeEventListener('mouseup', onWindowMouseUp);
+      document.body.style.cursor = originalCursor;
+    };
+  }, [
+    dragMode,
+    dragStartPos,
+    startPriceScale,
+    startZoom,
+    startPanOffset,
+    startVerticalPan,
+    invertDrag,
+    maxPan,
+    priceScaleFactor,
+    visibleCandles,
+    onZoomChange,
+    rightAxisWidth,
+    bottomAxisHeight
+  ]);
+
+  // Mouse Move Event Handler for Hover Crosshair & HUD
   const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -893,69 +1126,6 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     setHoverPos({ x, y });
     updateCursor(x, y);
-
-    const plotWidth = rect.width - rightAxisWidth;
-    const plotHeight = rect.height - bottomAxisHeight;
-
-    if (x < plotWidth && y < plotHeight) {
-      const candleWidth = plotWidth / visibleCandles.length;
-      const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(x / candleWidth)));
-      setHoverCandle(visibleCandles[candleIdx] || null);
-    } else {
-      setHoverCandle(null);
-    }
-
-    // Dragging Right Price Axis: Vertical stretch/contract
-    if (dragMode === 'scale-price') {
-      const deltaY = e.clientY - dragStartPos.y;
-      // Drag down = stretch (larger range / smaller factor), Drag up = contract
-      const factor = Math.exp(deltaY * 0.007);
-      const nextScale = Math.max(0.15, Math.min(6.0, startPriceScale * factor));
-      setPriceScaleFactor(nextScale);
-      return;
-    }
-
-    // Dragging Bottom Time Axis: Horizontal stretch/contract
-    if (dragMode === 'scale-time') {
-      const deltaX = e.clientX - dragStartPos.x;
-      // Drag left = contract (more bars), Drag right = stretch (fewer bars / zoom in)
-      const factor = Math.exp(-deltaX * 0.005);
-      const nextZoom = Math.max(0.3, Math.min(4.5, startZoom * factor));
-      onZoomChange(nextZoom);
-      return;
-    }
-
-    // Dragging Main Chart: 2D Panning (X: time pan, Y: price pan)
-    if (dragMode === 'pan-chart') {
-      const deltaX = e.clientX - dragStartPos.x;
-      const deltaY = e.clientY - dragStartPos.y;
-
-      const candleWidth = plotWidth / visibleCandles.length;
-      const candleDelta = Math.round(deltaX / (candleWidth * 1.2));
-      if (candleDelta !== 0) {
-        // Invert horizontal drag: pushing mouse left (deltaX < 0) adds candleDelta to panOffset, moving chart to the right
-        const nextPan = invertDrag 
-          ? startPanOffset + candleDelta 
-          : startPanOffset - candleDelta;
-        setPanOffset(Math.max(0, Math.min(maxPan, nextPan)));
-      }
-
-      // Vertical price pan
-      let minP = Infinity, maxP = -Infinity;
-      for (const c of visibleCandles) {
-        if (c.low < minP) minP = c.low;
-        if (c.high > maxP) maxP = c.high;
-      }
-      const rawRange = Math.max(0.02, maxP - minP);
-      const bufferedRange = rawRange * 1.12 * priceScaleFactor;
-      const priceDelta = (deltaY / (plotHeight - plotHeight * 0.16)) * bufferedRange;
-      
-      // Invert vertical drag: pushing mouse upside (deltaY < 0) moves chart towards downside
-      const nextVert = invertDrag
-        ? startVerticalPan + priceDelta
-        : startVerticalPan - priceDelta;
-      setVerticalPanOffset(nextVert);
-    }
   };
 
   // Mouse Up & Leave Handlers
@@ -967,9 +1137,9 @@ export const StockChart: React.FC<StockChartProps> = ({
   };
 
   const handleMouseLeave = () => {
-    setDragMode('none');
-    setHoverPos(null);
-    setHoverCandle(null);
+    if (dragMode === 'none') {
+      setHoverPos(null);
+    }
   };
 
   // Double Click Handler: Reset Auto Scale
@@ -993,7 +1163,7 @@ export const StockChart: React.FC<StockChartProps> = ({
     // Double clicking X-axis resets time scale
     if (y >= plotHeight) {
       onZoomChange(1.0);
-      setPanOffset(0);
+      setPanOffset(20);
       return;
     }
 
@@ -1008,25 +1178,56 @@ export const StockChart: React.FC<StockChartProps> = ({
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
     const plotWidth = rect.width - rightAxisWidth;
+    const plotHeight = rect.height - bottomAxisHeight;
 
     // Wheel over price axis stretches/contracts price only
     if (x >= plotWidth) {
       if (e.deltaY < 0) {
-        setPriceScaleFactor(prev => Math.max(0.15, prev * 0.9));
+        setPriceScaleFactor(prev => Math.max(0.04, prev * 0.88));
       } else {
-        setPriceScaleFactor(prev => Math.min(6.0, prev * 1.1));
+        setPriceScaleFactor(prev => Math.min(15.0, prev * 1.12));
       }
       return;
     }
 
-    // Wheel over main chart or time axis zooms time
+    // Wheel over time axis stretches/contracts time only
+    if (y >= plotHeight) {
+      if (e.deltaY < 0) {
+        onZoomChange(Math.min(6.5, zoomLevel * 1.15));
+      } else {
+        onZoomChange(Math.max(0.18, zoomLevel / 1.15));
+      }
+      return;
+    }
+
+    // Alt or Ctrl + wheel anywhere on chart: stretch/contract price axis
+    if (e.altKey || e.ctrlKey) {
+      if (e.deltaY < 0) {
+        setPriceScaleFactor(prev => Math.max(0.04, prev * 0.88));
+      } else {
+        setPriceScaleFactor(prev => Math.min(15.0, prev * 1.12));
+      }
+      return;
+    }
+
+    // Shift + wheel on chart: pan time horizontally
+    if (e.shiftKey) {
+      const scrollStep = e.deltaY < 0 ? -4 : 4;
+      setPanOffset(prev => Math.max(0, Math.min(maxPan, prev + scrollStep)));
+      return;
+    }
+
+    // Default wheel on chart: zoom/stretch time
     if (e.deltaY < 0) {
-      onZoomChange(Math.min(4.5, zoomLevel * 1.15));
+      onZoomChange(Math.min(6.5, zoomLevel * 1.15));
     } else {
-      onZoomChange(Math.max(0.3, zoomLevel / 1.15));
+      onZoomChange(Math.max(0.18, zoomLevel / 1.15));
     }
   };
+
+  const isCustomScale = priceScaleFactor !== 1.0 || verticalPanOffset !== 0 || zoomLevel !== 1.0 || panOffset !== 20;
 
   return (
     <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden bg-[#0a0e16] select-none">
@@ -1042,17 +1243,62 @@ export const StockChart: React.FC<StockChartProps> = ({
         className="block touch-none"
       />
 
-      {/* Floating Auto-Scale button overlay */}
-      {(priceScaleFactor !== 1.0 || verticalPanOffset !== 0 || zoomLevel !== 1.0 || panOffset !== 20) && (
+      {/* Floating Scale & Axis Stretch/Contract Dock */}
+      <div className="absolute bottom-9 right-20 flex items-center bg-[#101726]/90 border border-[#223147] rounded-md backdrop-blur-xs shadow-xl divide-x divide-[#1e2b3e] text-xs z-20 overflow-hidden">
+        {/* Price Axis Stretch / Contract Buttons */}
+        <div className="flex items-center px-2 py-1 gap-1 text-slate-300">
+          <span className="text-[10px] font-mono text-slate-400 font-bold" title="Stretch / Contract Price Axis">
+            ↕ Price {Math.round(100 / priceScaleFactor)}%:
+          </span>
+          <button
+            onClick={handleStretchPrice}
+            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-sky-600 hover:text-white text-sky-400 font-bold text-xs transition-colors"
+            title="Stretch Price Scale (Taller Candles / Zoom Price In)"
+          >
+            +
+          </button>
+          <button
+            onClick={handleContractPrice}
+            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-[#25354e] text-slate-300 hover:text-white font-bold text-xs transition-colors"
+            title="Contract Price Scale (Shorter Candles / Zoom Price Out)"
+          >
+            -
+          </button>
+        </div>
+
+        {/* Time Axis Stretch / Contract Buttons */}
+        <div className="flex items-center px-2 py-1 gap-1 text-slate-300">
+          <span className="text-[10px] font-mono text-slate-400 font-bold" title="Stretch / Contract Time Axis">
+            ↔ Time {Math.round(zoomLevel * 100)}%:
+          </span>
+          <button
+            onClick={handleStretchTime}
+            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-sky-600 hover:text-white text-sky-400 font-bold text-xs transition-colors"
+            title="Stretch Time Scale (Wider Candles / Fewer Bars)"
+          >
+            +
+          </button>
+          <button
+            onClick={handleContractTime}
+            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-[#25354e] text-slate-300 hover:text-white font-bold text-xs transition-colors"
+            title="Contract Time Scale (Narrower Candles / More Bars)"
+          >
+            -
+          </button>
+        </div>
+
+        {/* Reset to Auto Button */}
         <button
           onClick={handleResetAutoScale}
-          className="absolute bottom-9 right-20 px-2.5 py-1 rounded bg-[#162235]/90 hover:bg-[#1f314d] text-sky-400 border border-sky-500/40 text-[11px] font-mono font-semibold backdrop-blur-xs shadow-lg transition-all flex items-center gap-1.5 z-20"
-          title="Reset Price & Time Scale to Auto (or double-click axis)"
+          className={`px-2.5 py-1 font-mono text-[10px] font-semibold transition-colors flex items-center gap-1.5 ${
+            isCustomScale ? 'text-sky-400 bg-sky-950/40 hover:bg-sky-900/50' : 'text-slate-500 hover:text-slate-300'
+          }`}
+          title="Reset Price & Time Scale to Auto (Double-click axis also resets)"
         >
-          <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-pulse" />
-          <span>Reset Scale</span>
+          <span className={`w-1.5 h-1.5 rounded-full ${isCustomScale ? 'bg-sky-400 animate-pulse' : 'bg-slate-600'}`} />
+          <span>AUTO</span>
         </button>
-      )}
+      </div>
 
       {/* Floating Drag Direction Mode toggle */}
       <button

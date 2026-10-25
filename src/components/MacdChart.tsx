@@ -13,7 +13,7 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel }) => {
 
   const macdData = useMemo(() => calculateMACD(candles, 12, 26, 9), [candles]);
 
-  const defaultVisibleBars = Math.max(30, Math.min(200, Math.round(90 / zoomLevel)));
+  const defaultVisibleBars = Math.max(10, Math.min(candles.length || 360, Math.round(90 / zoomLevel)));
   const startIndex = Math.max(0, candles.length - defaultVisibleBars);
   const visibleMacd = useMemo(() => macdData.slice(startIndex), [macdData, startIndex]);
 

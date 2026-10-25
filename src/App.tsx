@@ -89,19 +89,36 @@ export default function App() {
 
         // Update selected stock meta
         if (data.meta) {
+          const updatedPrice = data.meta.price || selectedStock.price;
+          const updatedChange = typeof data.meta.change === 'number' && Number.isFinite(data.meta.change) ? data.meta.change : selectedStock.change;
+          const updatedPct = typeof data.meta.changePercent === 'number' && Number.isFinite(data.meta.changePercent) ? data.meta.changePercent : selectedStock.changePercent;
+          const updatedVol = typeof data.meta.volume === 'number' && Number.isFinite(data.meta.volume) ? data.meta.volume : selectedStock.volume;
+
           setSelectedStock(prev => ({
             ...prev,
-            price: data.meta.price || prev.price,
-            change: data.meta.change !== undefined ? data.meta.change : prev.change,
-            changePercent: data.meta.changePercent !== undefined ? data.meta.changePercent : prev.changePercent,
-            volume: data.meta.volume || prev.volume,
-            high: data.meta.high || prev.high,
-            low: data.meta.low || prev.low,
-            open: data.meta.open || prev.open,
-            prevClose: data.meta.prevClose || prev.prevClose,
+            price: updatedPrice,
+            change: updatedChange,
+            changePercent: updatedPct,
+            volume: updatedVol,
+            high: typeof data.meta.high === 'number' && Number.isFinite(data.meta.high) ? data.meta.high : prev.high,
+            low: typeof data.meta.low === 'number' && Number.isFinite(data.meta.low) ? data.meta.low : prev.low,
+            open: typeof data.meta.open === 'number' && Number.isFinite(data.meta.open) ? data.meta.open : prev.open,
+            prevClose: typeof data.meta.prevClose === 'number' && Number.isFinite(data.meta.prevClose) ? data.meta.prevClose : prev.prevClose,
             high52w: data.meta.fiftyTwoWeekHigh || prev.high52w,
             low52w: data.meta.fiftyTwoWeekLow || prev.low52w,
           }));
+
+          setStocks(prev => prev.map(s => s.ticker === ticker ? {
+            ...s,
+            price: updatedPrice,
+            change: updatedChange,
+            changePercent: updatedPct,
+            volume: updatedVol,
+            high: typeof data.meta.high === 'number' && Number.isFinite(data.meta.high) ? data.meta.high : s.high,
+            low: typeof data.meta.low === 'number' && Number.isFinite(data.meta.low) ? data.meta.low : s.low,
+            open: typeof data.meta.open === 'number' && Number.isFinite(data.meta.open) ? data.meta.open : s.open,
+            prevClose: typeof data.meta.prevClose === 'number' && Number.isFinite(data.meta.prevClose) ? data.meta.prevClose : s.prevClose,
+          } : s));
         }
       } else {
         // Fallback to high-fidelity generator if market closed or empty
@@ -127,6 +144,10 @@ export default function App() {
 
       const flashMap: Record<string, 'up' | 'down'> = {};
 
+      const safeNum = (v: any, fallback: number): number => {
+        return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+      };
+
       setStocks(prev => {
         return prev.map(stock => {
           const match = data.find(d => d.ticker === stock.ticker);
@@ -139,20 +160,20 @@ export default function App() {
 
           return {
             ...stock,
-            price: match.price || stock.price,
-            change: match.change !== undefined ? match.change : stock.change,
-            changePercent: match.changePercent !== undefined ? match.changePercent : stock.changePercent,
-            volume: match.volume || stock.volume,
-            high: match.high || stock.high,
-            low: match.low || stock.low,
-            open: match.open || stock.open,
-            prevClose: match.prevClose || stock.prevClose,
-            openPercent: match.openPercent !== undefined ? match.openPercent : stock.openPercent,
-            m1Change: match.m1Change !== undefined ? match.m1Change : stock.m1Change,
-            m5Change: match.m5Change !== undefined ? match.m5Change : stock.m5Change,
-            m15Change: match.m15Change !== undefined ? match.m15Change : stock.m15Change,
-            h1Change: match.h1Change !== undefined ? match.h1Change : stock.h1Change,
-            h4Change: match.h4Change !== undefined ? match.h4Change : stock.h4Change,
+            price: safeNum(match.price, stock.price),
+            change: safeNum(match.change, stock.change),
+            changePercent: safeNum(match.changePercent, stock.changePercent),
+            volume: safeNum(match.volume, stock.volume),
+            high: safeNum(match.high, stock.high),
+            low: safeNum(match.low, stock.low),
+            open: safeNum(match.open, stock.open),
+            prevClose: safeNum(match.prevClose, stock.prevClose),
+            openPercent: safeNum(match.openPercent, stock.openPercent),
+            m1Change: safeNum(match.m1Change, stock.m1Change),
+            m5Change: safeNum(match.m5Change, stock.m5Change),
+            m15Change: safeNum(match.m15Change, stock.m15Change),
+            h1Change: safeNum(match.h1Change, stock.h1Change),
+            h4Change: safeNum(match.h4Change, stock.h4Change),
           };
         });
       });

@@ -9,6 +9,7 @@ import {
   ArrowDown, 
   Search,
   Star,
+  ChevronLeft,
   ChevronRight
 } from 'lucide-react';
 import { StockQuote } from '../types/stock';
@@ -73,7 +74,7 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
 
     if (activeCategory === 'gainers') return s.changePercent >= 20;
     if (activeCategory === 'active') return s.volume >= 10000000;
-    if (activeCategory === 'nasdaq100') return ['NVDA', 'AAPL', 'TSLA', 'QQQ'].includes(s.ticker);
+    if (activeCategory === 'nasdaq100') return ['NVDA', 'AAPL', 'TSLA', 'QQQ', 'MSFT', 'AMZN', 'META', 'GOOG', 'GOOGL', 'AMD', 'NFLX', 'INTC', 'COST', 'AVGO', 'QCOM', 'TXN', 'ADBE', 'CSCO', 'PEP', 'TMUS', 'AMGN', 'HON', 'SBUX', 'ISRG', 'BKNG', 'MDLZ', 'GILD', 'ADP', 'VRTX', 'REGN', 'PANW', 'LULU', 'SNPS', 'CDNS', 'ASML', 'MSTR', 'COIN', 'PLTR', 'ARM', 'SMCI'].includes(s.ticker);
     if (activeCategory === 'biotech') return s.sector.includes('Biotechnology') || s.sector.includes('Medical');
     if (activeCategory === 'favorites') return s.isFavorite;
     return true;
@@ -83,26 +84,30 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
   const sortedStocks = [...filteredStocks].sort((a, b) => {
     let aVal = a[sortCol];
     let bVal = b[sortCol];
-    if (typeof aVal === 'string') {
+    if (typeof aVal === 'string' || typeof bVal === 'string') {
+      const aStr = String(aVal ?? '');
+      const bStr = String(bVal ?? '');
       return sortDir === 'asc' 
-        ? (aVal as string).localeCompare(bVal as string)
-        : (bVal as string).localeCompare(aVal as string);
+        ? aStr.localeCompare(bStr)
+        : bStr.localeCompare(aStr);
     }
-    return sortDir === 'asc' ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+    const aNum = typeof aVal === 'number' && Number.isFinite(aVal) ? aVal : 0;
+    const bNum = typeof bVal === 'number' && Number.isFinite(bVal) ? bVal : 0;
+    return sortDir === 'asc' ? aNum - bNum : bNum - aNum;
   });
 
   const pageSize = 25;
   const totalPages = Math.max(1, Math.ceil(sortedStocks.length / pageSize));
   const pageStocks = sortedStocks.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
-  const renderPctCell = (val: number) => {
-    if (val === 0) {
+  const renderPctCell = (val: number | null | undefined) => {
+    if (val === null || val === undefined || !Number.isFinite(val) || val === 0) {
       return <span className="text-slate-500 font-mono text-[11px]">0.00%</span>;
     }
     const isPos = val > 0;
     return (
       <span className={`font-mono text-[11px] ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
-        {isPos ? '+' : ''}{val.toFixed(2)}%
+        {isPos ? '+' : ''}{Number(val).toFixed(2)}%
       </span>
     );
   };
@@ -194,12 +199,12 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
       </div>
 
       {/* Table Header Row */}
-      <div className="grid grid-cols-[82px_1fr_56px_56px_56px_56px_56px_64px_62px] gap-1 px-2.5 py-1.5 bg-[#0e131d] border-b border-[#1b2333] text-[10px] font-medium text-slate-400 uppercase tracking-wider shrink-0 select-none">
+      <div className="grid grid-cols-[88px_1fr_56px_56px_56px_56px_56px_64px_62px] gap-1 px-2.5 py-1.5 bg-[#0e131d] border-b border-[#1b2333] text-[10px] font-medium text-slate-400 uppercase tracking-wider shrink-0 select-none">
         <div 
           onClick={() => handleSort('ticker')}
           className="cursor-pointer hover:text-slate-200 flex items-center gap-0.5 group"
         >
-          <span>Tck</span>
+          <span>Tck/Price</span>
           {getSortIcon('ticker')}
         </div>
         <div 
@@ -273,24 +278,31 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
                 onSelectStock(stock);
                 soundManager.playSelect();
               }}
-              className={`grid grid-cols-[82px_1fr_56px_56px_56px_56px_56px_64px_62px] gap-1 px-2.5 py-1.5 items-center cursor-pointer transition-colors ${
+              className={`grid grid-cols-[88px_1fr_56px_56px_56px_56px_56px_64px_62px] gap-1 px-2.5 py-1.5 items-center cursor-pointer transition-colors ${
                 isSelected 
                   ? 'bg-[#182334] text-white border-l-2 border-l-sky-500' 
                   : 'hover:bg-[#121925] text-slate-300'
               } ${tickStatus === 'up' ? 'flash-up' : tickStatus === 'down' ? 'flash-down' : ''}`}
             >
-              {/* Ticker & Tag */}
+              {/* Ticker, Tag & 4-Decimal Price */}
               <div className="flex items-center gap-1.5 overflow-hidden">
                 <span 
                   className="w-2 h-2 rounded-[2px] shrink-0" 
                   style={{ backgroundColor: stock.tagColor }} 
                 />
-                <span className="font-mono font-bold text-xs tracking-tight text-slate-100">
-                  {stock.ticker}
-                </span>
-                {stock.isFavorite && (
-                  <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 shrink-0" />
-                )}
+                <div className="flex flex-col min-w-0">
+                  <div className="flex items-center gap-1 leading-tight">
+                    <span className="font-mono font-bold text-xs tracking-tight text-slate-100">
+                      {stock.ticker}
+                    </span>
+                    {stock.isFavorite && (
+                      <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400 shrink-0" />
+                    )}
+                  </div>
+                  <span className="font-mono text-[10px] text-slate-400 leading-tight">
+                    ${(stock.price ?? 0).toFixed(4)}
+                  </span>
+                </div>
               </div>
 
               {/* Volume */}
@@ -343,13 +355,24 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
         )}
       </div>
 
-      {/* Pagination Footer matching screenshot: 1  2  ...  57  → */}
+      {/* Pagination Footer */}
       <div className="h-9 bg-[#0e131d] border-t border-[#1a2333] px-3 flex items-center justify-between text-xs shrink-0 select-none">
         <div className="text-[11px] text-slate-500 font-mono">
-          Showing {pageStocks.length} of {sortedStocks.length} NASDAQ stocks
+          Showing {sortedStocks.length > 0 ? ((currentPage - 1) * pageSize + 1).toLocaleString() : '0'}–{Math.min(currentPage * pageSize, sortedStocks.length).toLocaleString()} of {sortedStocks.length.toLocaleString()} NASDAQ stocks
         </div>
 
         <div className="flex items-center gap-1 font-mono text-[11px]">
+          {/* Previous Page */}
+          <button
+            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-200 disabled:opacity-25 disabled:hover:text-slate-400 transition-colors"
+            title="Previous page"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Page 1 */}
           <button
             onClick={() => setCurrentPage(1)}
             className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
@@ -358,27 +381,45 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
           >
             1
           </button>
-          <button
-            onClick={() => setCurrentPage(2)}
-            className={`w-6 h-6 rounded flex items-center justify-center transition-colors ${
-              currentPage === 2 ? 'bg-sky-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            2
-          </button>
-          <span className="text-slate-600 px-0.5">...</span>
-          <button
-            onClick={() => setCurrentPage(totalPages)}
-            className={`px-1.5 h-6 rounded flex items-center justify-center transition-colors ${
-              currentPage === totalPages ? 'bg-sky-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
-            }`}
-          >
-            {totalPages > 2 ? totalPages : 57}
-          </button>
+
+          {/* Left Ellipsis */}
+          {currentPage > 3 && (
+            <span className="text-slate-600 px-0.5">...</span>
+          )}
+
+          {/* Intermediate active page button if not 1 or totalPages */}
+          {currentPage > 1 && currentPage < totalPages && (
+            <button
+              onClick={() => setCurrentPage(currentPage)}
+              className="px-2 h-6 rounded flex items-center justify-center bg-sky-600 text-white font-bold transition-colors"
+            >
+              {currentPage}
+            </button>
+          )}
+
+          {/* Right Ellipsis */}
+          {currentPage < totalPages - 2 && (
+            <span className="text-slate-600 px-0.5">...</span>
+          )}
+
+          {/* Last Page */}
+          {totalPages > 1 && (
+            <button
+              onClick={() => setCurrentPage(totalPages)}
+              className={`px-1.5 h-6 rounded flex items-center justify-center transition-colors ${
+                currentPage === totalPages ? 'bg-sky-600 text-white font-bold' : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              {totalPages}
+            </button>
+          )}
+
+          {/* Next Page */}
           <button
             onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
             disabled={currentPage === totalPages}
-            className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-200 disabled:opacity-30 disabled:hover:text-slate-400"
+            className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-200 disabled:opacity-25 disabled:hover:text-slate-400 transition-colors"
+            title="Next page"
           >
             <ChevronRight className="w-3.5 h-3.5" />
           </button>

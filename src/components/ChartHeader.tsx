@@ -113,7 +113,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                 />
               </div>
               <div className="max-h-64 overflow-y-auto divide-y divide-[#182232]">
-                {filteredStocks.map((stock) => (
+                {filteredStocks.slice(0, 60).map((stock) => (
                   <div
                     key={stock.ticker}
                     onClick={() => {
@@ -136,13 +136,23 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                       </div>
                     </div>
                     <div className="text-right font-mono">
-                      <div className="text-slate-200">${stock.price.toFixed(2)}</div>
+                      <div className="text-slate-200">${stock.price.toFixed(4)}</div>
                       <div className={`text-[10px] ${stock.change >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
                         {stock.change >= 0 ? '+' : ''}{stock.changePercent.toFixed(2)}%
                       </div>
                     </div>
                   </div>
                 ))}
+                {filteredStocks.length > 60 && (
+                  <div className="px-3 py-2 text-[10px] text-slate-500 text-center font-mono bg-[#0d1420]">
+                    Showing 60 of {filteredStocks.length.toLocaleString()} matches. Type to refine.
+                  </div>
+                )}
+                {filteredStocks.length === 0 && (
+                  <div className="p-4 text-center text-slate-500 text-xs">
+                    No NASDAQ ticker found for &quot;{searchQuery}&quot;
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -282,24 +292,29 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
         </div>
       </div>
 
-      {/* Right: Price Change indicators exactly matching the screenshot (+0.69 (18.85%) and ☾ -0.07 (1.61%)) */}
+      {/* Right: Price & Change indicators matching high precision (+0.6900 (18.85%) and ☾ -0.0700 (1.61%)) */}
       <div className="flex items-center gap-2 sm:gap-3 font-mono font-medium">
+        {/* Prominent Current Tick Price */}
+        <div className="text-white text-xs sm:text-sm font-bold tracking-tight bg-[#151e2c] px-2 py-0.5 rounded border border-[#232f44]">
+          ${(currentStock.price ?? 0).toFixed(4)}
+        </div>
+
         {/* Primary Intraday Change */}
         <div className={`flex items-center gap-1 ${isPositive ? 'text-emerald-400' : 'text-rose-400'}`}>
           <span className="text-xs sm:text-sm font-bold">
-            {isPositive ? '+' : ''}{currentStock.change >= 0 ? currentStock.change.toFixed(2) : currentStock.change.toFixed(2)}
+            {isPositive ? '+' : ''}{(currentStock.change ?? 0).toFixed(4)}
           </span>
           <span className="text-[11px] sm:text-xs">
-            ({isPositive ? '+' : ''}{currentStock.changePercent.toFixed(2)}%)
+            ({isPositive ? '+' : ''}{(currentStock.changePercent ?? 0).toFixed(2)}%)
           </span>
         </div>
 
-        {/* Secondary / After Hours Change (purple like in screenshot: ☾ -0.07 (1.61%)) */}
-        {currentStock.afterHoursChange !== undefined && (
+        {/* Secondary / After Hours Change */}
+        {currentStock.afterHoursChange !== undefined && currentStock.afterHoursChange !== null && (
           <div className="hidden sm:flex items-center gap-1 text-[#c084fc] text-[11px]">
             <span>☾</span>
             <span>
-              {isAfterHoursPositive ? '+' : ''}{currentStock.afterHoursChange.toFixed(2)}
+              {isAfterHoursPositive ? '+' : ''}{(currentStock.afterHoursChange ?? 0).toFixed(4)}
             </span>
             <span>
               ({Math.abs(currentStock.afterHoursPercent ?? 0).toFixed(2)}%)

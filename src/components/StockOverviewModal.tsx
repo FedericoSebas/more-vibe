@@ -55,16 +55,16 @@ export const StockOverviewModal: React.FC<StockOverviewModalProps> = ({
             <div>
               <div className="text-[11px] text-slate-400 uppercase tracking-wider font-semibold">Real-Time Quote</div>
               <div className="text-2xl font-mono font-bold text-white mt-0.5">
-                ${stock.price.toFixed(2)}
+                ${(stock.price ?? 0).toFixed(4)}
               </div>
             </div>
 
             <div className="text-right">
               <div className={`text-base font-mono font-bold ${isPos ? 'text-emerald-400' : 'text-rose-400'}`}>
-                {isPos ? '+' : ''}{stock.change.toFixed(2)} ({isPos ? '+' : ''}{stock.changePercent.toFixed(2)}%)
+                {isPos ? '+' : ''}{(stock.change ?? 0).toFixed(4)} ({isPos ? '+' : ''}{(stock.changePercent ?? 0).toFixed(2)}%)
               </div>
               <div className="text-[11px] font-mono text-slate-400">
-                Prev Close: ${stock.prevClose.toFixed(2)} · Open: ${stock.open.toFixed(2)}
+                Prev Close: ${(stock.prevClose ?? 0).toFixed(4)} · Open: ${(stock.open ?? 0).toFixed(4)}
               </div>
             </div>
           </div>
@@ -82,7 +82,7 @@ export const StockOverviewModal: React.FC<StockOverviewModalProps> = ({
               </div>
               <div className="p-2.5 rounded bg-[#131b27] border border-[#1d293b]">
                 <div className="text-[10px] text-slate-400 uppercase">P/E Ratio</div>
-                <div className="font-bold text-slate-100 mt-0.5">{stock.peRatio > 0 ? stock.peRatio.toFixed(1) : 'N/A'}</div>
+                <div className="font-bold text-slate-100 mt-0.5">{stock.peRatio && stock.peRatio > 0 ? stock.peRatio.toFixed(1) : 'N/A'}</div>
               </div>
               <div className="p-2.5 rounded bg-[#131b27] border border-[#1d293b]">
                 <div className="text-[10px] text-slate-400 uppercase">Float Shares</div>
@@ -90,11 +90,11 @@ export const StockOverviewModal: React.FC<StockOverviewModalProps> = ({
               </div>
               <div className="p-2.5 rounded bg-[#131b27] border border-[#1d293b]">
                 <div className="text-[10px] text-slate-400 uppercase">Day Range</div>
-                <div className="font-bold text-slate-100 mt-0.5">${stock.low.toFixed(2)} - ${stock.high.toFixed(2)}</div>
+                <div className="font-bold text-slate-100 mt-0.5">${(stock.low ?? 0).toFixed(4)} - ${(stock.high ?? 0).toFixed(4)}</div>
               </div>
               <div className="p-2.5 rounded bg-[#131b27] border border-[#1d293b]">
                 <div className="text-[10px] text-slate-400 uppercase">52-Week Range</div>
-                <div className="font-bold text-slate-100 mt-0.5">${stock.low52w.toFixed(2)} - ${stock.high52w.toFixed(2)}</div>
+                <div className="font-bold text-slate-100 mt-0.5">${(stock.low52w ?? 0).toFixed(4)} - ${(stock.high52w ?? 0).toFixed(4)}</div>
               </div>
               <div className="p-2.5 rounded bg-[#131b27] border border-[#1d293b]">
                 <div className="text-[10px] text-slate-400 uppercase">Total Today Vol</div>
