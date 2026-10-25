@@ -6,7 +6,9 @@ import {
   ChartType, 
   DrawingTool, 
   DrawnObject, 
-  IndicatorVisibility 
+  IndicatorVisibility,
+  DateRangeKey,
+  CustomDateRange
 } from './types/stock';
 import { INITIAL_STOCKS, generateCandlesForStock } from './utils/stockData';
 import { soundManager } from './utils/sound';
@@ -22,10 +24,17 @@ import { CustomizeModal } from './components/CustomizeModal';
 
 export default function App() {
   const [stocks, setStocks] = useState<StockQuote[]>(INITIAL_STOCKS);
-  // Default to TORO as shown in the reference image
-  const [selectedStock, setSelectedStock] = useState<StockQuote>(INITIAL_STOCKS[0]);
-  const [timeframe, setTimeframe] = useState<Timeframe>('5M');
-  const [candles, setCandles] = useState<Candle[]>(() => generateCandlesForStock(INITIAL_STOCKS[0], '5M'));
+  // Default to AIOK in 1M timeframe and 1D range matching reference Image 2
+  const defaultStock = INITIAL_STOCKS.find(s => s.ticker === 'AIOK') || INITIAL_STOCKS[0];
+  const [selectedStock, setSelectedStock] = useState<StockQuote>(defaultStock);
+  const [timeframe, setTimeframe] = useState<Timeframe>('1M');
+  const [selectedRange, setSelectedRange] = useState<DateRangeKey>('1d');
+  const [customRange, setCustomRange] = useState<CustomDateRange>({
+    startDate: new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0],
+    endDate: new Date().toISOString().split('T')[0]
+  });
+  const [candles, setCandles] = useState<Candle[]>(() => generateCandlesForStock(defaultStock, '1M', '1d'));
+  const [visibleRange, setVisibleRange] = useState<{ start: number; end: number }>({ start: 0, end: 0 });
   const [chartType, setChartType] = useState<ChartType>('candles');
   const [isLoadingChart, setIsLoadingChart] = useState<boolean>(false);
   const [isRealDataActive, setIsRealDataActive] = useState<boolean>(false);
@@ -74,10 +83,22 @@ export default function App() {
   };
 
   // Fetch real NASDAQ chart data from backend proxy
-  const loadRealStockChart = useCallback(async (ticker: string, tf: Timeframe) => {
+  const loadRealStockChart = useCallback(async (
+    ticker: string, 
+    tf: Timeframe,
+    rangeKey: DateRangeKey = selectedRange,
+    custom?: CustomDateRange
+  ) => {
     setIsLoadingChart(true);
     try {
-      const res = await fetch(`/api/stock/chart/${encodeURIComponent(ticker)}?timeframe=${encodeURIComponent(tf)}`);
+      let queryUrl = `/api/stock/chart/${encodeURIComponent(ticker)}?timeframe=${encodeURIComponent(tf)}&range=${encodeURIComponent(rangeKey)}`;
+      const activeCustom = custom || customRange;
+      if (rangeKey === 'custom' && activeCustom?.startDate && activeCustom?.endDate) {
+        const p1 = Math.floor(new Date(activeCustom.startDate).getTime() / 1000);
+        const p2 = Math.floor(new Date(activeCustom.endDate).getTime() / 1000);
+        queryUrl += `&period1=${p1}&period2=${p2}`;
+      }
+      const res = await fetch(queryUrl);
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -122,17 +143,17 @@ export default function App() {
         }
       } else {
         // Fallback to high-fidelity generator if market closed or empty
-        const fallback = generateCandlesForStock(selectedStock, tf);
+        const fallback = generateCandlesForStock(selectedStock, tf, rangeKey, custom || customRange);
         setCandles(fallback);
       }
     } catch (err) {
       console.warn('Real NASDAQ API fetch notice (using high-precision fallback):', err);
-      const fallback = generateCandlesForStock(selectedStock, tf);
+      const fallback = generateCandlesForStock(selectedStock, tf, rangeKey, custom || customRange);
       setCandles(fallback);
     } finally {
       setIsLoadingChart(false);
     }
-  }, [selectedStock.ticker]);
+  }, [selectedStock.ticker, selectedRange, customRange]);
 
   // Fetch real NASDAQ scanner watchlist quotes
   const loadRealScannerQuotes = useCallback(async () => {
@@ -188,10 +209,11 @@ export default function App() {
   }, []);
 
   // Initial load of real chart & scanner quotes
+  // Initial load of real chart & scanner quotes
   useEffect(() => {
-    loadRealStockChart(selectedStock.ticker, timeframe);
+    loadRealStockChart(selectedStock.ticker, timeframe, selectedRange, customRange);
     loadRealScannerQuotes();
-  }, [selectedStock.ticker, timeframe, loadRealStockChart, loadRealScannerQuotes]);
+  }, [selectedStock.ticker, timeframe, selectedRange, customRange, loadRealStockChart, loadRealScannerQuotes]);
 
   // Continuous real-time polling of live NASDAQ feed
   useEffect(() => {
@@ -204,7 +226,13 @@ export default function App() {
 
     // Poll active chart every 5 seconds for new trades/candles
     const chartTimer = setInterval(() => {
-      fetch(`/api/stock/chart/${encodeURIComponent(selectedStock.ticker)}?timeframe=${encodeURIComponent(timeframe)}`)
+      let pollUrl = `/api/stock/chart/${encodeURIComponent(selectedStock.ticker)}?timeframe=${encodeURIComponent(timeframe)}&range=${encodeURIComponent(selectedRange)}`;
+      if (selectedRange === 'custom' && customRange?.startDate && customRange?.endDate) {
+        const p1 = Math.floor(new Date(customRange.startDate).getTime() / 1000);
+        const p2 = Math.floor(new Date(customRange.endDate).getTime() / 1000);
+        pollUrl += `&period1=${p1}&period2=${p2}`;
+      }
+      fetch(pollUrl)
         .then(r => r.ok ? r.json() : null)
         .then(data => {
           if (data && data.candles && data.candles.length > 0) {
@@ -241,12 +269,37 @@ export default function App() {
       clearInterval(scannerTimer);
       clearInterval(chartTimer);
     };
-  }, [isLive, speed, selectedStock.ticker, selectedStock.price, timeframe, loadRealScannerQuotes]);
+  }, [isLive, speed, selectedStock.ticker, selectedStock.price, timeframe, selectedRange, customRange, loadRealScannerQuotes]);
+
+  // Handler for range selection from calendar icon
+  const handleSelectRange = (range: DateRangeKey, custom?: CustomDateRange) => {
+    setSelectedRange(range);
+    if (custom) {
+      setCustomRange(custom);
+    }
+    let targetTf = timeframe;
+    if (range === '1d' || range === '5d') targetTf = '5M';
+    else if (range === '1mo' || range === '3mo') targetTf = '1H';
+    else if (range === '6mo' || range === 'ytd' || range === '1y' || range === '2y' || range === '5y' || range === 'max') targetTf = 'D';
+    else if (range === 'custom' && custom) {
+      const diffDays = (new Date(custom.endDate).getTime() - new Date(custom.startDate).getTime()) / 86400000;
+      if (diffDays <= 2) targetTf = '5M';
+      else if (diffDays <= 45) targetTf = '1H';
+      else targetTf = 'D';
+    }
+    setTimeframe(targetTf);
+    loadRealStockChart(selectedStock.ticker, targetTf, range, custom || customRange);
+  };
+
+  const handleSelectTimeframe = (tf: Timeframe) => {
+    setTimeframe(tf);
+    loadRealStockChart(selectedStock.ticker, tf, selectedRange, customRange);
+  };
 
   // Handler for stock selection from scanner or dropdown
   const handleSelectStock = (stock: StockQuote) => {
     setSelectedStock(stock);
-    loadRealStockChart(stock.ticker, timeframe);
+    loadRealStockChart(stock.ticker, timeframe, selectedRange, customRange);
   };
 
   const handleToggleFavorite = (ticker: string) => {
@@ -305,7 +358,10 @@ export default function App() {
         onToggleFavorite={handleToggleFavorite}
         onOpenOverview={() => setIsOverviewOpen(true)}
         timeframe={timeframe}
-        onChangeTimeframe={setTimeframe}
+        onChangeTimeframe={handleSelectTimeframe}
+        selectedRange={selectedRange}
+        onSelectRange={handleSelectRange}
+        customRange={customRange}
         chartType={chartType}
         onChangeChartType={setChartType}
         indicators={indicators}
@@ -325,6 +381,8 @@ export default function App() {
           <span>Bars: {candles.length}</span>
           <span className="text-slate-600">·</span>
           <span>Timeframe: {timeframe}</span>
+          <span className="text-slate-600">·</span>
+          <span className="text-sky-400 font-semibold">Range: {selectedRange.toUpperCase()}</span>
         </div>
 
         {isLoadingChart && (
@@ -364,6 +422,7 @@ export default function App() {
               zoomLevel={zoomLevel}
               onZoomChange={setZoomLevel}
               timeframe={timeframe}
+              onVisibleRangeChange={(start, end) => setVisibleRange({ start, end })}
             />
           </div>
 
@@ -372,6 +431,8 @@ export default function App() {
             <MacdChart
               candles={candles}
               zoomLevel={zoomLevel}
+              startIndex={visibleRange.start}
+              endIndex={visibleRange.end}
             />
           )}
         </div>

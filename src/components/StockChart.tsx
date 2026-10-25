@@ -29,6 +29,7 @@ interface StockChartProps {
   zoomLevel: number;
   onZoomChange: (zoom: number) => void;
   timeframe: Timeframe;
+  onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
 }
 
 type DragMode = 'none' | 'pan-chart' | 'scale-price' | 'scale-time';
@@ -44,13 +45,14 @@ export const StockChart: React.FC<StockChartProps> = ({
   onAddDrawing,
   zoomLevel,
   onZoomChange,
-  timeframe
+  timeframe,
+  onVisibleRangeChange
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
-  // Time & Price pan offsets
-  const [panOffset, setPanOffset] = useState<number>(20);
+  // Time & Price pan offsets (default 0 so chart starts at the beginning 04:00 AM)
+  const [panOffset, setPanOffset] = useState<number>(0);
   const [verticalPanOffset, setVerticalPanOffset] = useState<number>(0);
   // Price stretch / contract factor (1.0 = auto-fit, <1 = stretched, >1 = contracted)
   const [priceScaleFactor, setPriceScaleFactor] = useState<number>(1.0);
@@ -83,9 +85,9 @@ export const StockChart: React.FC<StockChartProps> = ({
   const rightAxisWidth = 74;
   const bottomAxisHeight = 26;
 
-  // Viewport calculation
-  const defaultVisibleBars = Math.max(10, Math.min(candles.length || 360, Math.round(90 / zoomLevel)));
-  const totalCandles = candles.length;
+  // Viewport calculation - at zoomLevel 1.0 (default), all candles fit across the screen
+  const totalCandles = candles.length || 1;
+  const defaultVisibleBars = Math.max(10, Math.min(totalCandles, Math.round(totalCandles / zoomLevel)));
   
   // Constrain pan offset
   const maxPan = Math.max(0, totalCandles - defaultVisibleBars);
@@ -95,11 +97,15 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   const visibleCandles = useMemo(() => candles.slice(startIndex, endIndex), [candles, startIndex, endIndex]);
 
+  useEffect(() => {
+    onVisibleRangeChange?.(startIndex, endIndex);
+  }, [startIndex, endIndex, onVisibleRangeChange]);
+
   // Reset to Auto-Scale
   const handleResetAutoScale = useCallback(() => {
     setPriceScaleFactor(1.0);
     setVerticalPanOffset(0);
-    setPanOffset(20);
+    setPanOffset(0);
     onZoomChange(1.0);
   }, [onZoomChange]);
 
@@ -214,6 +220,38 @@ export const StockChart: React.FC<StockChartProps> = ({
       ctx.fillText('◀ ↔ DRAG TIME ▶', 12, plotHeight + 16);
     }
 
+    // 2.5 Draw Extended Hours Session Shading & Clean Session Boundary Dividers
+    const hasExtendedSessions = visibleCandles.some(c => c.session === 'pre' || c.session === 'post');
+    if (hasExtendedSessions) {
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        const x = indexToX(i);
+        const halfW = candleWidth / 2;
+
+        if (c.session === 'pre' || c.session === 'post') {
+          // Subtle warm dark-charcoal tint matching reference Image 2
+          ctx.fillStyle = 'rgba(38, 28, 20, 0.42)';
+          ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+        }
+
+        // Clean session transition boundary line
+        if (i > 0) {
+          const prev = visibleCandles[i - 1];
+          if (prev.session !== c.session) {
+            const boundaryX = x - halfW;
+            ctx.beginPath();
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+            ctx.moveTo(boundaryX, 0);
+            ctx.lineTo(boundaryX, plotHeight);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+      }
+    }
+
     // 3. Draw Horizontal Grid Lines & Price Labels
     const gridSteps = 8;
     ctx.font = '10px "JetBrains Mono", monospace';
@@ -239,26 +277,83 @@ export const StockChart: React.FC<StockChartProps> = ({
       ctx.fillText(price.toFixed(4), plotWidth + 6, y);
     }
 
-    // 4. Draw Vertical Grid Lines & Time Labels
-    const timeStep = Math.max(1, Math.floor(visibleCandles.length / 8));
+    // 4. Draw Vertical Grid Lines & Eastern Time Labels
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
+    ctx.font = '10px "JetBrains Mono", monospace';
 
-    for (let i = 0; i < visibleCandles.length; i += timeStep) {
-      const x = indexToX(i);
-      const c = visibleCandles[i];
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    let lastRenderedX = -999;
+    const isIntraday = visibleCandles.length > 0 && visibleCandles[0].timeStr && visibleCandles[0].timeStr.includes(':');
 
-      ctx.beginPath();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([3, 3]);
-      ctx.moveTo(x, 0);
-      ctx.lineTo(x, plotHeight);
-      ctx.stroke();
-      ctx.setLineDash([]);
+    if (isIntraday) {
+      let prevHour = -1;
+      let prevDay = -1;
 
-      ctx.fillStyle = isOverXAxis || isDraggingX ? '#94a3b8' : '#64748b';
-      ctx.fillText(c.timeStr, x, plotHeight + 7);
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        const x = indexToX(i);
+        const [hStr, mStr] = c.timeStr.split(':');
+        const hour = parseInt(hStr, 10);
+        const min = parseInt(mStr, 10);
+        const dObj = new Date(c.time);
+        const day = dObj.getDate();
+
+        // Check if this bar is an hour tick or day transition
+        const isNewDay = prevDay !== -1 && day !== prevDay;
+        const isHourTick = i === 0 || isNewDay || (hour !== prevHour && (min === 0 || min < 10));
+
+        if (isHourTick) {
+          prevHour = hour;
+          prevDay = day;
+
+          // Ensure minimum horizontal distance between adjacent labels
+          if (x - lastRenderedX >= 40 || i === 0) {
+            // Vertical grid line
+            ctx.beginPath();
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 3]);
+            ctx.moveTo(x, 0);
+            ctx.lineTo(x, plotHeight);
+            ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Label text: date on first tick / day rollover, otherwise 5 AM, 6 AM, etc.
+            let labelText = '';
+            if (i === 0 || isNewDay) {
+              labelText = `${months[dObj.getMonth()]} ${dObj.getDate()}`;
+            } else {
+              const h12 = hour % 12 === 0 ? 12 : hour % 12;
+              const ampm = hour < 12 ? 'AM' : 'PM';
+              labelText = `${h12} ${ampm}`;
+            }
+
+            ctx.fillStyle = isOverXAxis || isDraggingX ? '#94a3b8' : '#64748b';
+            ctx.fillText(labelText, x, plotHeight + 7);
+            lastRenderedX = x;
+          }
+        }
+      }
+    } else {
+      // Standard multi-day / weekly grid steps
+      const timeStep = Math.max(1, Math.floor(visibleCandles.length / 8));
+      for (let i = 0; i < visibleCandles.length; i += timeStep) {
+        const x = indexToX(i);
+        const c = visibleCandles[i];
+
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 3]);
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, plotHeight);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = isOverXAxis || isDraggingX ? '#94a3b8' : '#64748b';
+        ctx.fillText(c.timeStr, x, plotHeight + 7);
+      }
     }
 
     // 5. Draw Volume Profile on Left Side (VP 50)
@@ -313,7 +408,13 @@ export const StockChart: React.FC<StockChartProps> = ({
       const volBarH = (c.volume / (maxVol || 1)) * (volumeHeight - 8);
       const volY = plotHeight - volBarH;
 
-      ctx.fillStyle = isUp ? 'rgba(34, 197, 94, 0.45)' : 'rgba(239, 68, 68, 0.45)';
+      if (c.session === 'pre') {
+        ctx.fillStyle = isUp ? 'rgba(52, 211, 153, 0.45)' : 'rgba(251, 113, 133, 0.45)';
+      } else if (c.session === 'post') {
+        ctx.fillStyle = isUp ? 'rgba(45, 212, 191, 0.45)' : 'rgba(244, 63, 94, 0.45)';
+      } else {
+        ctx.fillStyle = isUp ? 'rgba(34, 197, 94, 0.45)' : 'rgba(239, 68, 68, 0.45)';
+      }
       ctx.fillRect(x - bodyWidth / 2, volY, bodyWidth, volBarH);
     }
 
@@ -357,7 +458,15 @@ export const StockChart: React.FC<StockChartProps> = ({
 
         const candleTop = Math.min(openY, closeY);
         const candleHeight = Math.max(1.5, Math.abs(closeY - openY));
-        const candleColor = isUp ? '#22c55e' : '#ef4444';
+
+        let candleColor: string;
+        if (c.session === 'pre') {
+          candleColor = isUp ? '#34d399' : '#fb7185'; // Pre-market mint / coral
+        } else if (c.session === 'post') {
+          candleColor = isUp ? '#2dd4bf' : '#f43f5e'; // After-hours teal / crimson
+        } else {
+          candleColor = isUp ? '#22c55e' : '#ef4444'; // Regular trading green / red
+        }
 
         // Draw Wick
         ctx.beginPath();
@@ -563,10 +672,16 @@ export const StockChart: React.FC<StockChartProps> = ({
       const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)));
       const hovered = visibleCandles[candleIdx];
       if (hovered) {
-        ctx.fillStyle = '#334155';
-        ctx.fillRect(hoverPos.x - 30, plotHeight, 60, 18);
+        const sessionPrefix = hovered.session === 'pre' ? 'PRE ' : hovered.session === 'post' ? 'POST ' : '';
+        const badgeBg = hovered.session === 'pre' ? '#0e7490' : hovered.session === 'post' ? '#6b21a8' : '#334155';
+        const badgeW = hovered.session ? 74 : 60;
+        ctx.fillStyle = badgeBg;
+        ctx.fillRect(hoverPos.x - badgeW / 2, plotHeight, badgeW, 18);
         ctx.fillStyle = '#ffffff';
-        ctx.fillText(hovered.timeStr, hoverPos.x, plotHeight + 9);
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`${sessionPrefix}${hovered.timeStr}`, hoverPos.x, plotHeight + 9);
       }
     }
 
@@ -626,6 +741,24 @@ export const StockChart: React.FC<StockChartProps> = ({
       ctx.fillStyle = hoveredCandleIndex >= 0 ? '#38bdf8' : '#94a3b8';
       ctx.fillText(timeTag, hudX, hudY);
       hudX += Math.max(140, Math.round(ctx.measureText(timeTag).width + 12));
+
+      // Session Tag Badge if extended hours
+      if (activeCandle.session) {
+        const sessionLabel = activeCandle.session === 'pre' ? 'PRE-MKT' : activeCandle.session === 'post' ? 'POST-MKT' : 'REGULAR';
+        const sessionBg = activeCandle.session === 'pre' ? '#0e7490' : activeCandle.session === 'post' ? '#6b21a8' : '#1e293b';
+        const sessionTextColor = activeCandle.session === 'regular' ? '#94a3b8' : '#ffffff';
+        ctx.fillStyle = sessionBg;
+        ctx.fillRect(hudX, hudY - 1, 58, 14);
+        ctx.fillStyle = sessionTextColor;
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(sessionLabel, hudX + 29, hudY + 6);
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.font = '11px "JetBrains Mono", monospace';
+        hudX += 66;
+      }
 
       // Open label & value with 4 decimals
       ctx.fillStyle = '#64748b';

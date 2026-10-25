@@ -5,19 +5,25 @@ import { calculateMACD } from '../utils/stockData';
 interface MacdChartProps {
   candles: Candle[];
   zoomLevel: number;
+  startIndex?: number;
+  endIndex?: number;
 }
 
-export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel }) => {
+export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel, startIndex, endIndex }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   const macdData = useMemo(() => calculateMACD(candles, 12, 26, 9), [candles]);
 
-  const defaultVisibleBars = Math.max(10, Math.min(candles.length || 360, Math.round(90 / zoomLevel)));
-  const startIndex = Math.max(0, candles.length - defaultVisibleBars);
-  const visibleMacd = useMemo(() => macdData.slice(startIndex), [macdData, startIndex]);
+  const totalCandles = candles.length || 1;
+  const defaultBars = Math.max(10, Math.min(totalCandles, Math.round(totalCandles / zoomLevel)));
+  const effStart = startIndex !== undefined ? startIndex : Math.max(0, totalCandles - defaultBars);
+  const effEnd = endIndex !== undefined ? endIndex : Math.min(totalCandles, effStart + defaultBars);
 
-  const rightAxisWidth = 64;
+  const visibleMacd = useMemo(() => macdData.slice(effStart, effEnd), [macdData, effStart, effEnd]);
+  const visibleCandlesSlice = useMemo(() => candles.slice(effStart, effEnd), [candles, effStart, effEnd]);
+
+  const rightAxisWidth = 74;
 
   const renderMacd = useCallback(() => {
     const canvas = canvasRef.current;
@@ -35,6 +41,35 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel }) => {
     ctx.fillRect(0, 0, width, height);
 
     if (visibleMacd.length === 0) return;
+
+    const candleWidth = plotWidth / visibleMacd.length;
+
+    // Extended Hours Session Shading (perfect vertical match with StockChart)
+    for (let i = 0; i < visibleCandlesSlice.length; i++) {
+      const c = visibleCandlesSlice[i];
+      const x = i * candleWidth + candleWidth / 2;
+      const halfW = candleWidth / 2;
+
+      if (c && (c.session === 'pre' || c.session === 'post')) {
+        ctx.fillStyle = 'rgba(38, 28, 20, 0.42)';
+        ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
+      }
+
+      if (i > 0 && visibleCandlesSlice[i - 1]) {
+        const prev = visibleCandlesSlice[i - 1];
+        if (prev.session !== c?.session) {
+          const boundaryX = x - halfW;
+          ctx.beginPath();
+          ctx.lineWidth = 1;
+          ctx.setLineDash([3, 3]);
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+          ctx.moveTo(boundaryX, 0);
+          ctx.lineTo(boundaryX, plotHeight);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
 
     // Determine min and max
     let minVal = -0.05;
@@ -58,8 +93,6 @@ export const MacdChart: React.FC<MacdChartProps> = ({ candles, zoomLevel }) => {
     const valToY = (val: number) => {
       return plotHeight - ((val - bufferedMin) / bufferedRange) * plotHeight;
     };
-
-    const candleWidth = plotWidth / visibleMacd.length;
     const zeroY = valToY(0);
 
     // 1. Draw Zero Reference Line & Y Grid Lines

@@ -1,8 +1,28 @@
 export type Timeframe = '1M' | '5M' | '10M' | '1H' | '4H' | 'D';
 
+export type DateRangeKey = 
+  | '1d' 
+  | '5d' 
+  | '1mo' 
+  | '3mo' 
+  | '6mo' 
+  | 'ytd' 
+  | '1y' 
+  | '2y' 
+  | '5y' 
+  | 'max' 
+  | 'custom';
+
+export interface CustomDateRange {
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+}
+
 export type ChartType = 'candles' | 'hollow' | 'line' | 'area';
 
 export type DrawingTool = 'crosshair' | 'pan' | 'trendline' | 'horizontal' | 'fibonacci' | 'brush' | 'ruler' | 'select' | null;
+
+export type MarketSession = 'pre' | 'regular' | 'post';
 
 export interface Candle {
   time: number; // Unix timestamp in ms
@@ -12,6 +32,7 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  session?: MarketSession; // Pre-market (4:00-9:30 ET), Regular (9:30-16:00 ET), Post/After-market (16:00-20:00 ET)
 }
 
 export interface IndicatorVisibility {

@@ -8,9 +8,12 @@ import {
   SlidersHorizontal,
   ChevronDown,
   Layers,
-  Search
+  Search,
+  Check,
+  ChevronRight,
+  ArrowLeft
 } from 'lucide-react';
-import { StockQuote, Timeframe, ChartType, IndicatorVisibility } from '../types/stock';
+import { StockQuote, Timeframe, ChartType, IndicatorVisibility, DateRangeKey, CustomDateRange } from '../types/stock';
 import { soundManager } from '../utils/sound';
 
 interface ChartHeaderProps {
@@ -21,6 +24,9 @@ interface ChartHeaderProps {
   onOpenOverview: () => void;
   timeframe: Timeframe;
   onChangeTimeframe: (tf: Timeframe) => void;
+  selectedRange: DateRangeKey;
+  onSelectRange: (range: DateRangeKey, customRange?: CustomDateRange) => void;
+  customRange?: CustomDateRange;
   chartType: ChartType;
   onChangeChartType: (type: ChartType) => void;
   indicators: IndicatorVisibility;
@@ -35,6 +41,9 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
   onOpenOverview,
   timeframe,
   onChangeTimeframe,
+  selectedRange,
+  onSelectRange,
+  customRange,
   chartType,
   onChangeChartType,
   indicators,
@@ -43,11 +52,21 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
   const [showSymbolSearch, setShowSymbolSearch] = useState(false);
   const [showChartTypeMenu, setShowChartTypeMenu] = useState(false);
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
+  const [showCalendarMenu, setShowCalendarMenu] = useState(false);
+  const [isCustomRangeOpen, setIsCustomRangeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
+
+  const [tempStartDate, setTempStartDate] = useState(
+    customRange?.startDate || new Date(Date.now() - 30 * 86400000).toISOString().split('T')[0]
+  );
+  const [tempEndDate, setTempEndDate] = useState(
+    customRange?.endDate || new Date().toISOString().split('T')[0]
+  );
 
   const searchRef = useRef<HTMLDivElement>(null);
   const chartTypeRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
+  const calendarRef = useRef<HTMLDivElement>(null);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -60,6 +79,10 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
       }
       if (indicatorRef.current && !indicatorRef.current.contains(e.target as Node)) {
         setShowIndicatorMenu(false);
+      }
+      if (calendarRef.current && !calendarRef.current.contains(e.target as Node)) {
+        setShowCalendarMenu(false);
+        setIsCustomRangeOpen(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -238,13 +261,189 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
           ))}
         </div>
 
-        {/* Calendar Date Picker Button */}
-        <button
-          className="p-1.5 rounded bg-[#171f2c] hover:bg-[#1f2a3c] text-slate-400 hover:text-slate-200 border border-[#263246]"
-          title="Date Range & Historical Session"
-        >
-          <Calendar className="w-3.5 h-3.5" />
-        </button>
+        {/* Calendar Date Picker / Range Selector */}
+        <div className="relative" ref={calendarRef}>
+          <button
+            onClick={() => {
+              setShowCalendarMenu(!showCalendarMenu);
+              setShowChartTypeMenu(false);
+              setShowIndicatorMenu(false);
+              setShowSymbolSearch(false);
+            }}
+            className={`p-1.5 rounded transition-all flex items-center justify-center ${
+              showCalendarMenu
+                ? 'border-2 border-sky-400 bg-[#162030] text-sky-400 shadow-[0_0_12px_rgba(56,189,248,0.35)]'
+                : selectedRange !== '5d'
+                ? 'border border-sky-500/70 bg-[#162132] text-sky-400'
+                : 'border border-[#263246] bg-[#171f2c] hover:bg-[#1f2a3c] text-slate-400 hover:text-slate-200'
+            }`}
+            title={`Select Range (Current: ${selectedRange.toUpperCase()})`}
+          >
+            <Calendar className="w-3.5 h-3.5" />
+          </button>
+
+          {showCalendarMenu && (
+            <div className="absolute top-full left-0 mt-1.5 w-44 bg-[#141a26] border border-[#263143] rounded-lg shadow-2xl py-2 z-50 text-slate-200 select-none">
+              {!isCustomRangeOpen ? (
+                <>
+                  {[
+                    {
+                      title: 'Days',
+                      items: [
+                        { id: '1d' as DateRangeKey, label: '1 Day' },
+                        { id: '5d' as DateRangeKey, label: '5 Days' },
+                      ]
+                    },
+                    {
+                      title: 'Months',
+                      items: [
+                        { id: '1mo' as DateRangeKey, label: '1 Month' },
+                        { id: '3mo' as DateRangeKey, label: '3 Months' },
+                        { id: '6mo' as DateRangeKey, label: '6 Months' },
+                      ]
+                    },
+                    {
+                      title: 'Years',
+                      items: [
+                        { id: 'ytd' as DateRangeKey, label: 'Year to Date' },
+                        { id: '1y' as DateRangeKey, label: '1 Year' },
+                        { id: '2y' as DateRangeKey, label: '2 Years' },
+                        { id: '5y' as DateRangeKey, label: '5 Years' },
+                        { id: 'max' as DateRangeKey, label: 'Max' },
+                      ]
+                    }
+                  ].map((section, sIdx) => (
+                    <div key={section.title}>
+                      {sIdx > 0 && <div className="border-t border-[#232d3d] my-1.5 mx-2" />}
+                      <div className="px-3.5 pt-1 pb-1 text-xs text-slate-400 font-normal">
+                        {section.title}
+                      </div>
+                      <div className="space-y-0.5 px-1">
+                        {section.items.map((item) => {
+                          const isSelected = selectedRange === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              onClick={() => {
+                                onSelectRange(item.id);
+                                soundManager.playSelect();
+                                setShowCalendarMenu(false);
+                              }}
+                              className={`w-full text-left px-3.5 py-1 text-[13px] font-semibold rounded transition-colors flex items-center justify-between ${
+                                isSelected
+                                  ? 'text-sky-400 font-bold bg-[#1c2637]'
+                                  : 'text-slate-200 hover:text-white hover:bg-[#20293b]'
+                              }`}
+                            >
+                              <span>{item.label}</span>
+                              {isSelected && <Check className="w-3.5 h-3.5 text-sky-400" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="border-t border-[#232d3d] my-1.5 mx-2" />
+
+                  <div className="px-1">
+                    <button
+                      onClick={() => setIsCustomRangeOpen(true)}
+                      className={`w-full text-left px-3.5 py-1 text-[13px] font-semibold rounded transition-colors flex items-center justify-between ${
+                        selectedRange === 'custom'
+                          ? 'text-sky-400 font-bold bg-[#1c2637]'
+                          : 'text-slate-200 hover:text-white hover:bg-[#20293b]'
+                      }`}
+                    >
+                      <span>Custom</span>
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                    </button>
+                  </div>
+                </>
+              ) : (
+                <div className="px-2.5 py-1 space-y-2.5">
+                  <div className="flex items-center justify-between pb-1.5 border-b border-[#232d3d]">
+                    <button
+                      onClick={() => setIsCustomRangeOpen(false)}
+                      className="flex items-center gap-1 text-xs text-slate-400 hover:text-slate-200 transition-colors"
+                    >
+                      <ArrowLeft className="w-3 h-3" />
+                      <span>Back</span>
+                    </button>
+                    <span className="text-xs font-bold text-slate-200">Custom Range</span>
+                  </div>
+
+                  <div className="space-y-1.5 text-xs">
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-0.5">Start Date</label>
+                      <input
+                        type="date"
+                        value={tempStartDate}
+                        onChange={(e) => setTempStartDate(e.target.value)}
+                        className="w-full bg-[#0d121c] border border-[#273245] rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] text-slate-400 block mb-0.5">End Date</label>
+                      <input
+                        type="date"
+                        value={tempEndDate}
+                        onChange={(e) => setTempEndDate(e.target.value)}
+                        className="w-full bg-[#0d121c] border border-[#273245] rounded px-2 py-1 text-xs text-slate-200 focus:outline-none focus:border-sky-500 font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick preset chips */}
+                  <div className="grid grid-cols-2 gap-1 pt-1">
+                    {[
+                      { label: 'Past 7D', days: 7 },
+                      { label: 'Past 30D', days: 30 },
+                      { label: 'Past 90D', days: 90 },
+                      { label: 'Past Year', days: 365 },
+                    ].map((preset) => (
+                      <button
+                        key={preset.label}
+                        type="button"
+                        onClick={() => {
+                          const end = new Date();
+                          const start = new Date(Date.now() - preset.days * 86400000);
+                          setTempEndDate(end.toISOString().split('T')[0]);
+                          setTempStartDate(start.toISOString().split('T')[0]);
+                        }}
+                        className="text-[10px] py-0.5 px-1 bg-[#1c2434] hover:bg-[#253147] text-slate-300 rounded text-center transition-colors border border-[#293549]"
+                      >
+                        {preset.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="pt-1 flex items-center gap-1.5">
+                    <button
+                      onClick={() => {
+                        if (tempStartDate && tempEndDate) {
+                          onSelectRange('custom', { startDate: tempStartDate, endDate: tempEndDate });
+                          soundManager.playSelect();
+                          setShowCalendarMenu(false);
+                          setIsCustomRangeOpen(false);
+                        }
+                      }}
+                      className="flex-1 py-1 bg-sky-600 hover:bg-sky-500 text-white rounded text-xs font-semibold text-center transition-colors shadow-sm"
+                    >
+                      Apply
+                    </button>
+                    <button
+                      onClick={() => setIsCustomRangeOpen(false)}
+                      className="px-2 py-1 bg-[#1a2332] hover:bg-[#222e42] text-slate-400 hover:text-slate-200 rounded text-xs transition-colors"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
 
         {/* Indicators Toggle Dropdown */}
         <div className="relative" ref={indicatorRef}>
