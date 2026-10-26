@@ -68,6 +68,19 @@ export const ChartTourModal: React.FC<ChartTourModalProps> = ({ isOpen, onClose 
           </div>
 
           <div className="flex items-start gap-3 p-3 bg-[#131b27] rounded border border-[#1d293b]">
+            <Layers className="w-5 h-5 text-emerald-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-slate-100 text-sm">Footprint / Order Flow & Level 2 DOM</div>
+              <p className="mt-1 text-slate-400 leading-relaxed">
+                <strong className="text-emerald-300">Footprint Ladders:</strong> Available on the <strong className="text-white font-mono">1M, 5M, and 10M</strong> timeframes. Zoom in significantly (or click <span className="text-emerald-400 font-mono font-bold">[ZOOM FOOTPRINT]</span>) to reveal internal candle auction mechanics with exact <strong className="text-white">Bid × Ask volume ladders</strong>, Point of Control (<span className="text-amber-400 font-bold">POC</span>) nodes, aggressive buying/selling imbalance highlights (3:1 ratio), and candle Delta metrics (Δ).
+              </p>
+              <p className="mt-1.5 text-slate-400 leading-relaxed">
+                <strong className="text-sky-300">Level 2 Order Book (DOM):</strong> Click <span className="text-sky-400 font-mono font-bold">[LEVEL 2]</span> in the header to open the Depth of Market drawer with multi-tier bid/ask liquidity ladders, market participant IDs (MPIDs), real-time spread, imbalance meters, and streaming Time & Sales (Tape).
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-3 p-3 bg-[#131b27] rounded border border-[#1d293b]">
             <CandlestickChart className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
             <div>
               <div className="font-semibold text-slate-100 text-sm">Interactive Mouse Pan & Axis Stretch/Contract</div>
@@ -86,10 +99,24 @@ export const ChartTourModal: React.FC<ChartTourModalProps> = ({ isOpen, onClose 
           <div className="flex items-start gap-3 p-3 bg-[#131b27] rounded border border-[#1d293b]">
             <Layers className="w-5 h-5 text-amber-400 shrink-0 mt-0.5" />
             <div>
-              <div className="font-semibold text-slate-100 text-sm">Technical Indicators & MACD Subchart</div>
+              <div className="font-semibold text-slate-100 text-sm">Technical Indicators & Bicolor MACD Subchart</div>
               <p className="mt-1 text-slate-400 leading-relaxed">
-                Toggle EMA 9 (yellow), SMA 20 (blue), SMA 200 (purple), VWAP (white), and left-side Volume Profile (VP 50). The bottom subchart tracks real-time MACD (12, 26, 9) with histogram bars and signal convergence.
+                Toggle EMA 9 (yellow), SMA 20 (blue), SMA 200 (purple), VWAP (white), and left-side Volume Profile (VP 50). The bottom subchart features a <strong className="text-emerald-400">Modern Bicolor MACD (12, 26, 9) Histogram</strong> that color-codes momentum acceleration and deceleration:
               </p>
+              <div className="grid grid-cols-2 gap-2 mt-2 text-[11px] font-mono">
+                <div className="p-1.5 rounded bg-emerald-950/40 border border-emerald-800/40">
+                  <span className="text-[#22c55e] font-bold">Bright Green:</span> Growing Positive (Bullish momentum accelerating)
+                </div>
+                <div className="p-1.5 rounded bg-emerald-950/20 border border-emerald-800/20">
+                  <span className="text-[#86efac] font-bold">Faded Green:</span> Shrinking Positive (Bullish momentum slowing)
+                </div>
+                <div className="p-1.5 rounded bg-rose-950/40 border border-rose-800/40">
+                  <span className="text-[#ef4444] font-bold">Bright Red:</span> Growing Negative (Bearish momentum accelerating)
+                </div>
+                <div className="p-1.5 rounded bg-rose-950/20 border border-rose-800/20">
+                  <span className="text-[#fca5a5] font-bold">Faded Red:</span> Shrinking Negative (Bearish momentum slowing)
+                </div>
+              </div>
             </div>
           </div>
 

@@ -89,7 +89,7 @@ export const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
       <button
         onClick={onZoomIn}
         className="w-7 h-7 rounded flex items-center justify-center text-slate-400 hover:text-slate-200 hover:bg-[#161f2c] transition-colors"
-        title="Zoom In (+)"
+        title="Zoom In (+) - Zoom deep for Candle Footprint / Order Flow"
       >
         <ZoomIn className="w-4 h-4" />
       </button>

@@ -33,6 +33,82 @@ export interface Candle {
   close: number;
   volume: number;
   session?: MarketSession; // Pre-market (4:00-9:30 ET), Regular (9:30-16:00 ET), Post/After-market (16:00-20:00 ET), Overnight (20:00-4:00 ET)
+  footprint?: CandleFootprint;
+}
+
+export type FootprintImbalanceMode = 'level' | 'diagonal';
+
+export interface FootprintLevel {
+  price: number;
+  bidVolume: number; // Selling volume hitting the bid
+  askVolume: number; // Buying volume lifting the ask
+  totalVolume: number;
+  delta: number;      // askVolume - bidVolume
+  isPoc: boolean;     // Point of Control (highest volume node)
+  isBuyImbalance: boolean;  // Ask >= 4x Bid
+  isSellImbalance: boolean; // Bid >= 4x Ask
+  buyImbalanceRatio?: number;
+  sellImbalanceRatio?: number;
+}
+
+export interface FootprintFilterConfig {
+  highlightImbalances: boolean;
+  imbalanceRatio: number; // e.g. 4.0 (4 times as many buyers or sellers)
+  imbalanceMode: FootprintImbalanceMode; // 'level' (same price level) | 'diagonal'
+  minVolumeThreshold: number; // minimum contracts threshold
+  showRatioBadge?: boolean;
+}
+
+export interface CandleFootprint {
+  levels: FootprintLevel[];
+  pocPrice: number;
+  totalDelta: number;
+  deltaPercent: number;
+  totalVolume: number;
+  minDelta: number;
+  maxDelta: number;
+  tickSize: number;
+}
+
+export interface Level2Order {
+  id: string;
+  price: number;
+  size: number;
+  total: number;
+  ordersCount: number;
+  mpid?: string; // Market participant ID: 'NSDQ' | 'ARCA' | 'BATS' | 'EDGX' | 'IEX'
+}
+
+export interface Level2Book {
+  ticker: string;
+  bids: Level2Order[];
+  asks: Level2Order[];
+  spread: number;
+  spreadPercent: number;
+  bidDepthTotal: number;
+  askDepthTotal: number;
+  imbalanceRatio: number; // e.g. -1 (100% sell pressure) to +1 (100% buy pressure)
+  lastUpdated: number;
+}
+
+export interface OrderFlowTrade {
+  id: string;
+  time: number;
+  timeStr: string;
+  price: number;
+  size: number;
+  side: 'buy' | 'sell';
+}
+
+export type FootprintMode = 'bid-ask' | 'delta' | 'volume';
+
+export interface FootprintConfig {
+  enabled: boolean;
+  mode: FootprintMode;
+  imbalanceRatio: number;
+  showPoc: boolean;
+  showSummaryDelta: boolean;
+  minZoomCandleWidth: number;
 }
 
 export interface IndicatorVisibility {
@@ -42,6 +118,7 @@ export interface IndicatorVisibility {
   vwap: boolean;
   volumeProfile: boolean;
   macd: boolean;
+  barStats?: boolean;
 }
 
 export interface VolumeProfileLevel {

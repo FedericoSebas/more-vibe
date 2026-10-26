@@ -8,7 +8,8 @@ import {
   DrawnObject, 
   IndicatorVisibility,
   DateRangeKey,
-  CustomDateRange
+  CustomDateRange,
+  FootprintFilterConfig
 } from './types/stock';
 import { INITIAL_STOCKS, generateCandlesForStock } from './utils/stockData';
 import { soundManager } from './utils/sound';
@@ -21,6 +22,7 @@ import { WatchlistScanner } from './components/WatchlistScanner';
 import { StockOverviewModal } from './components/StockOverviewModal';
 import { ChartTourModal } from './components/ChartTourModal';
 import { CustomizeModal } from './components/CustomizeModal';
+import { Level2OrderBook } from './components/Level2OrderBook';
 
 export default function App() {
   const [stocks, setStocks] = useState<StockQuote[]>(INITIAL_STOCKS);
@@ -49,7 +51,8 @@ export default function App() {
     sma200: true,
     vwap: true,
     volumeProfile: true,
-    macd: true
+    macd: true,
+    barStats: true
   });
 
   // Drawing tools
@@ -63,6 +66,20 @@ export default function App() {
   const [speed, setSpeed] = useState<number>(1);
   const [updatedTickers, setUpdatedTickers] = useState<Record<string, 'up' | 'down'>>({});
 
+  // Level 2 Order Book & Footprint
+  const [isLevel2Open, setIsLevel2Open] = useState<boolean>(false);
+  const [footprintFilter, setFootprintFilter] = useState<FootprintFilterConfig>({
+    highlightImbalances: true,
+    imbalanceRatio: 4.0,
+    imbalanceMode: 'level',
+    minVolumeThreshold: 10,
+    showRatioBadge: true
+  });
+
+  const handleUpdateFootprintFilter = useCallback((updater: Partial<FootprintFilterConfig>) => {
+    setFootprintFilter(prev => ({ ...prev, ...updater }));
+  }, []);
+
   // Scanner filtering & modals
   const [activeCategory, setActiveCategory] = useState<string>('stocks');
   const [minVolume, setMinVolume] = useState<number>(0);
@@ -71,6 +88,14 @@ export default function App() {
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
   const [isOverviewOpen, setIsOverviewOpen] = useState<boolean>(false);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState<boolean>(false);
+
+  // Zoom directly to Footprint / Order Flow view (shows ~14 candles for wide footprint cells)
+  const handleZoomToFootprint = useCallback(() => {
+    const total = candles.length || 1;
+    const targetZoom = Math.max(2.5, total / 14);
+    setZoomLevel(targetZoom);
+    setPanOffset(0);
+  }, [candles.length]);
 
   // Fetch real NASDAQ chart data from backend proxy (stable callback with no external state deps)
   const loadRealStockChart = useCallback(async (
@@ -391,6 +416,11 @@ export default function App() {
         onChangeChartType={setChartType}
         indicators={indicators}
         onToggleIndicator={handleToggleIndicator}
+        isLevel2Open={isLevel2Open}
+        onToggleLevel2={() => setIsLevel2Open(prev => !prev)}
+        onZoomToFootprint={handleZoomToFootprint}
+        footprintFilter={footprintFilter}
+        onUpdateFootprintFilter={handleUpdateFootprintFilter}
       />
 
       {/* Real Data Connected Status Pill */}
@@ -408,6 +438,15 @@ export default function App() {
           <span>Timeframe: {timeframe}</span>
           <span className="text-slate-600">·</span>
           <span className="text-sky-400 font-semibold">Range: {selectedRange.toUpperCase()}</span>
+          {(timeframe === '1M' || timeframe === '5M' || timeframe === '10M') && (
+            <>
+              <span className="text-slate-600">·</span>
+              <span className="text-emerald-400 font-semibold flex items-center gap-1">
+                <span>ORDER FLOW FOOTPRINT:</span>
+                <span className="text-slate-300 font-normal">Zoom in to inspect Bid×Ask ladders</span>
+              </span>
+            </>
+          )}
         </div>
 
         {isLoadingChart && (
@@ -417,7 +456,7 @@ export default function App() {
         )}
       </div>
 
-      {/* 3. Main Workspace: Left Tool Rail + Candlestick/MACD Chart Canvas + Right Scanner */}
+      {/* 3. Main Workspace: Left Tool Rail + Candlestick/MACD Chart Canvas + Level 2 DOM + Right Scanner */}
       <div className="flex-1 flex min-h-0 overflow-hidden">
         {/* Left Drawing Toolbar */}
         <DrawingToolbar
@@ -425,8 +464,8 @@ export default function App() {
           onSelectTool={setActiveTool}
           magnetMode={magnetMode}
           onToggleMagnet={() => setMagnetMode(!magnetMode)}
-          onZoomIn={() => setZoomLevel(prev => Math.min(3.5, prev * 1.2))}
-          onZoomOut={() => setZoomLevel(prev => Math.max(0.4, prev / 1.2))}
+          onZoomIn={() => setZoomLevel(prev => Math.min(35.0, prev * 1.25))}
+          onZoomOut={() => setZoomLevel(prev => Math.max(0.2, prev / 1.25))}
           onResetZoom={() => setZoomLevel(1.0)}
           onClearDrawings={handleClearDrawings}
           drawingsCount={drawings.length}
@@ -451,6 +490,9 @@ export default function App() {
               timeframe={timeframe}
               panOffset={panOffset}
               onPanChange={setPanOffset}
+              onZoomToFootprint={handleZoomToFootprint}
+              footprintFilter={footprintFilter}
+              onUpdateFootprintFilter={handleUpdateFootprintFilter}
             />
           </div>
 
@@ -463,6 +505,14 @@ export default function App() {
             />
           )}
         </div>
+
+        {/* Level 2 Depth of Market (DOM) & Time and Sales Panel */}
+        <Level2OrderBook
+          stock={selectedStock}
+          isOpen={isLevel2Open}
+          onClose={() => setIsLevel2Open(false)}
+          isLive={isLive}
+        />
 
         {/* Right Watchlist Scanner Panel (identical to screenshot layout) */}
         <WatchlistScanner

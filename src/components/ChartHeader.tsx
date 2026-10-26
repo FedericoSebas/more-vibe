@@ -13,7 +13,7 @@ import {
   ChevronRight,
   ArrowLeft
 } from 'lucide-react';
-import { StockQuote, Timeframe, ChartType, IndicatorVisibility, DateRangeKey, CustomDateRange } from '../types/stock';
+import { StockQuote, Timeframe, ChartType, IndicatorVisibility, DateRangeKey, CustomDateRange, FootprintFilterConfig } from '../types/stock';
 import { soundManager } from '../utils/sound';
 
 interface ChartHeaderProps {
@@ -31,6 +31,11 @@ interface ChartHeaderProps {
   onChangeChartType: (type: ChartType) => void;
   indicators: IndicatorVisibility;
   onToggleIndicator: (key: keyof IndicatorVisibility) => void;
+  isLevel2Open?: boolean;
+  onToggleLevel2?: () => void;
+  onZoomToFootprint?: () => void;
+  footprintFilter?: FootprintFilterConfig;
+  onUpdateFootprintFilter?: (updater: Partial<FootprintFilterConfig>) => void;
 }
 
 export const ChartHeader: React.FC<ChartHeaderProps> = ({
@@ -47,12 +52,18 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
   chartType,
   onChangeChartType,
   indicators,
-  onToggleIndicator
+  onToggleIndicator,
+  isLevel2Open = false,
+  onToggleLevel2,
+  onZoomToFootprint,
+  footprintFilter,
+  onUpdateFootprintFilter
 }) => {
   const [showSymbolSearch, setShowSymbolSearch] = useState(false);
   const [showChartTypeMenu, setShowChartTypeMenu] = useState(false);
   const [showIndicatorMenu, setShowIndicatorMenu] = useState(false);
   const [showCalendarMenu, setShowCalendarMenu] = useState(false);
+  const [showFootprintFilter, setShowFootprintFilter] = useState(false);
   const [isCustomRangeOpen, setIsCustomRangeOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -67,6 +78,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
   const chartTypeRef = useRef<HTMLDivElement>(null);
   const indicatorRef = useRef<HTMLDivElement>(null);
   const calendarRef = useRef<HTMLDivElement>(null);
+  const footprintFilterRef = useRef<HTMLDivElement>(null);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -83,6 +95,9 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
       if (calendarRef.current && !calendarRef.current.contains(e.target as Node)) {
         setShowCalendarMenu(false);
         setIsCustomRangeOpen(false);
+      }
+      if (footprintFilterRef.current && !footprintFilterRef.current.contains(e.target as Node)) {
+        setShowFootprintFilter(false);
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -468,7 +483,8 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                 { key: 'sma200', label: 'SMA 200', color: '#a855f7' },
                 { key: 'vwap', label: 'VWAP', color: '#e2e8f0' },
                 { key: 'volumeProfile', label: 'Volume Profile (VP)', color: '#10b981' },
-                { key: 'macd', label: 'MACD (12, 26, 9)', color: '#38bdf8' },
+                { key: 'macd', label: 'MACD Bicolor (12, 26, 9)', color: '#22c55e' },
+                { key: 'barStats', label: 'Delta & Volume Rows', color: '#60a5fa' },
               ].map(ind => (
                 <label
                   key={ind.key}
@@ -489,6 +505,226 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
             </div>
           )}
         </div>
+
+        {/* Footprint / Order Flow Badge on 1M, 5M, 10M */}
+        {(timeframe === '1M' || timeframe === '5M' || timeframe === '10M') && (
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={onZoomToFootprint}
+              className="flex items-center gap-1.5 px-2 py-1 rounded bg-emerald-950/50 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-700/60 text-[11px] font-mono transition-all shadow-xs"
+              title="Footprint Order Flow (Bid x Ask / Imbalances) active on 1M, 5M, 10M. Click to zoom in directly."
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="font-bold">FOOTPRINT</span>
+              <span className="hidden lg:inline text-[10px] text-emerald-400/80">BID×ASK</span>
+            </button>
+
+            {/* Footprint Imbalance Filter Button & Popover */}
+            {footprintFilter && onUpdateFootprintFilter && (
+              <div className="relative" ref={footprintFilterRef}>
+                <button
+                  onClick={() => setShowFootprintFilter(!showFootprintFilter)}
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-mono transition-all border ${
+                    footprintFilter.highlightImbalances
+                      ? 'bg-amber-950/40 hover:bg-amber-900/50 text-amber-300 border-amber-500/50 shadow-xs shadow-amber-500/10'
+                      : 'bg-[#171f2c] hover:bg-[#1f2a3c] text-slate-400 border-[#263246]'
+                  }`}
+                  title="Footprint Imbalance Filter: Looks for and highlights 4x order volume imbalances at each price level"
+                >
+                  <SlidersHorizontal className="w-3 h-3 text-amber-400" />
+                  <span className="font-bold">IMBALANCE</span>
+                  <span className={`px-1 py-0.2 rounded text-[10px] font-bold ${
+                    footprintFilter.highlightImbalances 
+                      ? 'bg-amber-400/20 text-amber-300' 
+                      : 'bg-slate-800 text-slate-400'
+                  }`}>
+                    {footprintFilter.imbalanceRatio}×
+                  </span>
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    footprintFilter.highlightImbalances ? 'bg-amber-400 animate-pulse' : 'bg-slate-600'
+                  }`} />
+                </button>
+
+                {showFootprintFilter && (
+                  <div className="absolute top-full left-0 mt-1.5 w-72 bg-[#121824] border border-[#253247] rounded-lg shadow-2xl z-50 p-3 space-y-3 text-slate-200">
+                    {/* Header */}
+                    <div className="flex items-center justify-between border-b border-[#1e293b] pb-2">
+                      <div className="flex items-center gap-1.5">
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-amber-400" />
+                        <span className="font-bold text-xs text-white">Footprint Imbalance Filter</span>
+                      </div>
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                        {footprintFilter.imbalanceRatio}:1 Ratio
+                      </span>
+                    </div>
+
+                    {/* Enable Highlight Switch */}
+                    <label className="flex items-center justify-between p-2 rounded bg-[#171f2c] border border-[#232f42] cursor-pointer hover:bg-[#1c2637] transition-colors">
+                      <div>
+                        <div className="text-xs font-semibold text-white">Highlight Imbalances</div>
+                        <div className="text-[10px] text-slate-400 leading-tight">
+                          Highlight order numbers when buyers/sellers $\ge$ {footprintFilter.imbalanceRatio}×
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={footprintFilter.highlightImbalances}
+                        onChange={(e) => onUpdateFootprintFilter({ highlightImbalances: e.target.checked })}
+                        className="accent-amber-500 rounded cursor-pointer w-4 h-4"
+                      />
+                    </label>
+
+                    {/* Ratio Presets */}
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1.5 flex items-center justify-between">
+                        <span>Imbalance Ratio (Multiplier)</span>
+                        <span className="text-amber-400 font-mono text-xs">{footprintFilter.imbalanceRatio}× ({footprintFilter.imbalanceRatio}:1)</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[
+                          { label: '3.0×', val: 3.0 },
+                          { label: '4.0×', val: 4.0, defaultTag: true },
+                          { label: '5.0×', val: 5.0 },
+                          { label: '6.0×', val: 6.0 },
+                        ].map((preset) => (
+                          <button
+                            key={preset.label}
+                            onClick={() => {
+                              onUpdateFootprintFilter({ imbalanceRatio: preset.val });
+                              soundManager.playSelect();
+                            }}
+                            className={`py-1 px-1.5 rounded text-[11px] font-mono font-bold transition-all text-center border ${
+                              footprintFilter.imbalanceRatio === preset.val
+                                ? 'bg-amber-500/20 text-amber-300 border-amber-500/60 shadow-xs'
+                                : 'bg-[#18202e] hover:bg-[#202b3d] text-slate-300 border-[#253245]'
+                            }`}
+                          >
+                            {preset.label}
+                            {preset.defaultTag && <span className="block text-[8px] text-amber-400/80 font-sans">Default</span>}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Imbalance Calculation Method */}
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                        Comparison Mode
+                      </div>
+                      <div className="grid grid-cols-2 gap-1.5">
+                        <button
+                          onClick={() => {
+                            onUpdateFootprintFilter({ imbalanceMode: 'level' });
+                            soundManager.playSelect();
+                          }}
+                          className={`p-1.5 rounded text-left border transition-all ${
+                            footprintFilter.imbalanceMode === 'level'
+                              ? 'bg-sky-500/15 border-sky-500/50 text-sky-200'
+                              : 'bg-[#18202e] hover:bg-[#202b3d] border-[#253245] text-slate-400'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold">Price Level (Horizontal)</div>
+                          <div className="text-[9px] text-slate-400 leading-tight">Same price level orders</div>
+                        </button>
+
+                        <button
+                          onClick={() => {
+                            onUpdateFootprintFilter({ imbalanceMode: 'diagonal' });
+                            soundManager.playSelect();
+                          }}
+                          className={`p-1.5 rounded text-left border transition-all ${
+                            footprintFilter.imbalanceMode === 'diagonal'
+                              ? 'bg-sky-500/15 border-sky-500/50 text-sky-200'
+                              : 'bg-[#18202e] hover:bg-[#202b3d] border-[#253245] text-slate-400'
+                          }`}
+                        >
+                          <div className="text-[11px] font-bold">Diagonal (Auction)</div>
+                          <div className="text-[9px] text-slate-400 leading-tight">Ask[P] vs Bid[P-1]</div>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Minimum Volume Filter */}
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-1 flex items-center justify-between">
+                        <span>Min Orders Volume Filter</span>
+                        <span className="font-mono text-slate-300 text-[11px]">{footprintFilter.minVolumeThreshold} contracts</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-1">
+                        {[10, 25, 50, 100].map((vol) => (
+                          <button
+                            key={vol}
+                            onClick={() => {
+                              onUpdateFootprintFilter({ minVolumeThreshold: vol });
+                              soundManager.playSelect();
+                            }}
+                            className={`py-0.5 rounded text-[10px] font-mono transition-colors border ${
+                              footprintFilter.minVolumeThreshold === vol
+                                ? 'bg-[#29364b] text-white border-sky-500 font-bold'
+                                : 'bg-[#161e2b] hover:bg-[#1f293b] text-slate-400 border-[#243043]'
+                            }`}
+                          >
+                            ≥{vol}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Visual Color Legend */}
+                    <div className="pt-2 border-t border-[#1e293b] space-y-1">
+                      <div className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">
+                        Order Number Highlights Legend:
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] font-mono px-2 py-1 rounded bg-[#161f2d] border border-[#232f42]">
+                        <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
+                          <span className="w-2.5 h-2.5 rounded-[2px] bg-emerald-600 border border-emerald-400" />
+                          Ask Order Number
+                        </span>
+                        <span className="text-slate-300">≥ {footprintFilter.imbalanceRatio}× Buyers</span>
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] font-mono px-2 py-1 rounded bg-[#161f2d] border border-[#232f42]">
+                        <span className="flex items-center gap-1.5 text-rose-400 font-bold">
+                          <span className="w-2.5 h-2.5 rounded-[2px] bg-rose-600 border border-rose-400" />
+                          Bid Order Number
+                        </span>
+                        <span className="text-slate-300">≥ {footprintFilter.imbalanceRatio}× Sellers</span>
+                      </div>
+                    </div>
+
+                    {/* Quick Action: Zoom to Footprint */}
+                    <button
+                      onClick={() => {
+                        onZoomToFootprint?.();
+                        setShowFootprintFilter(false);
+                      }}
+                      className="w-full py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-xs font-semibold text-center transition-colors shadow-sm flex items-center justify-center gap-1.5"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                      <span>Zoom to Footprint View</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Level 2 Order Book (DOM) Toggle Button */}
+        {onToggleLevel2 && (
+          <button
+            onClick={onToggleLevel2}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono transition-all ${
+              isLevel2Open
+                ? 'bg-sky-500/25 text-sky-300 border border-sky-400/60 shadow-xs shadow-sky-500/10'
+                : 'bg-[#171f2c] hover:bg-[#1f2a3c] text-slate-300 border border-[#263246]'
+            }`}
+            title="Toggle NASDAQ Level 2 Depth of Market (DOM) and Time & Sales"
+          >
+            <Layers className="w-3 h-3 text-sky-400" />
+            <span className="font-semibold">LEVEL 2</span>
+            <span className={`w-1.5 h-1.5 rounded-full ${isLevel2Open ? 'bg-sky-400' : 'bg-slate-500'}`} />
+          </button>
+        )}
       </div>
 
       {/* Right: Price & Change indicators matching high precision (+0.6900 (18.85%) and ☾ -0.0700 (1.61%)) */}

@@ -12,7 +12,10 @@ import {
   IndicatorVisibility, 
   ChartType,
   VolumeProfileLevel,
-  Timeframe 
+  Timeframe,
+  CandleFootprint,
+  Level2Book,
+  FootprintFilterConfig
 } from '../types/stock';
 import { 
   calculateEMA, 
@@ -21,6 +24,10 @@ import {
   calculateVolumeProfile,
   formatCompactVolume 
 } from '../utils/stockData';
+import { 
+  generateCandleFootprint, 
+  formatOrderFlowVolume 
+} from '../utils/orderFlow';
 import { soundManager } from '../utils/sound';
 
 interface StockChartProps {
@@ -40,6 +47,10 @@ interface StockChartProps {
   panOffset?: number;
   onPanChange?: (pan: number | ((prev: number) => number)) => void;
   onVisibleRangeChange?: (startIndex: number, endIndex: number) => void;
+  level2Book?: Level2Book | null;
+  onZoomToFootprint?: () => void;
+  footprintFilter?: FootprintFilterConfig;
+  onUpdateFootprintFilter?: (updater: Partial<FootprintFilterConfig>) => void;
 }
 
 type DragMode = 'none' | 'pan-chart' | 'scale-price' | 'scale-time' | 'drag-drawing';
@@ -113,10 +124,25 @@ export const StockChart: React.FC<StockChartProps> = ({
   timeframe,
   panOffset: externalPanOffset,
   onPanChange,
-  onVisibleRangeChange
+  onVisibleRangeChange,
+  level2Book,
+  onZoomToFootprint,
+  footprintFilter,
+  onUpdateFootprintFilter
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const footprintCache = useRef<Map<string, CandleFootprint>>(new Map());
+
+  const activeFpFilter = useMemo(() => {
+    return footprintFilter || {
+      highlightImbalances: true,
+      imbalanceRatio: 4.0,
+      imbalanceMode: 'level' as const,
+      minVolumeThreshold: 10,
+      showRatioBadge: true
+    };
+  }, [footprintFilter]);
 
   // Time & Price pan offsets (default 0 so chart starts at the beginning 04:00 AM)
   const [internalPanOffset, setInternalPanOffset] = useState<number>(0);
@@ -165,7 +191,11 @@ export const StockChart: React.FC<StockChartProps> = ({
 
   // Layout metrics
   const rightAxisWidth = 74;
-  const bottomAxisHeight = 26;
+  const showBarStats = indicators.barStats !== false;
+  const barStatsRowHeight = 18;
+  const barStatsTableHeight = showBarStats ? barStatsRowHeight * 2 : 0;
+  const timeAxisHeight = 22;
+  const bottomAxisHeight = barStatsTableHeight + timeAxisHeight;
 
   // Viewport calculation - at zoomLevel 1.0 (default), all candles fit across the screen
   const totalCandles = candles.length || 1;
@@ -178,6 +208,7 @@ export const StockChart: React.FC<StockChartProps> = ({
   const endIndex = Math.min(totalCandles, startIndex + defaultVisibleBars);
 
   const visibleCandles = useMemo(() => candles.slice(startIndex, endIndex), [candles, startIndex, endIndex]);
+  const isFootprintZoomActive = (timeframe === '1M' || timeframe === '5M' || timeframe === '10M') && defaultVisibleBars <= 26;
 
   // Natural price min, max and buffered range
   const priceBounds = useMemo(() => {
@@ -378,6 +409,7 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     const plotWidth = width - rightAxisWidth;
     const plotHeight = height - bottomAxisHeight;
+    const timeAxisY = plotHeight + barStatsTableHeight;
     const volumeHeight = plotHeight * 0.16;
     const pricePlotHeight = plotHeight - volumeHeight;
 
@@ -436,15 +468,15 @@ export const StockChart: React.FC<StockChartProps> = ({
     ctx.fillStyle = isDraggingY ? '#172236' : isOverYAxis ? '#121a29' : '#0c1018';
     ctx.fillRect(plotWidth, 0, rightAxisWidth, plotHeight);
 
-    // Bottom X-axis background
-    const isOverXAxis = (hoverPos && hoverPos.y >= plotHeight && hoverPos.x < plotWidth) || dragMode === 'scale-time';
+    // Bottom X-axis background (time scale area)
+    const isOverXAxis = (hoverPos && hoverPos.y >= timeAxisY && hoverPos.x < plotWidth) || dragMode === 'scale-time';
     const isDraggingX = dragMode === 'scale-time';
     ctx.fillStyle = isDraggingX ? '#172236' : isOverXAxis ? '#121a29' : '#0c1018';
-    ctx.fillRect(0, plotHeight, plotWidth, bottomAxisHeight);
+    ctx.fillRect(0, timeAxisY, plotWidth, timeAxisHeight);
 
     // Corner box (Auto scale button area)
     ctx.fillStyle = '#0e131d';
-    ctx.fillRect(plotWidth, plotHeight, rightAxisWidth, bottomAxisHeight);
+    ctx.fillRect(plotWidth, timeAxisY, rightAxisWidth, timeAxisHeight);
 
     // Axis separator border lines with glowing highlight on hover/drag
     ctx.strokeStyle = isDraggingY ? '#38bdf8' : isOverYAxis ? 'rgba(56, 189, 248, 0.6)' : '#1a2333';
@@ -597,7 +629,7 @@ export const StockChart: React.FC<StockChartProps> = ({
             }
 
             ctx.fillStyle = isOverXAxis || isDraggingX ? '#94a3b8' : '#64748b';
-            ctx.fillText(labelText, x, plotHeight + 7);
+            ctx.fillText(labelText, x, timeAxisY + 5);
             lastRenderedX = x;
           }
         }
@@ -619,7 +651,7 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.setLineDash([]);
 
         ctx.fillStyle = isOverXAxis || isDraggingX ? '#94a3b8' : '#64748b';
-        ctx.fillText(c.timeStr, x, plotHeight + 7);
+        ctx.fillText(c.timeStr, x, timeAxisY + 5);
       }
     }
 
@@ -713,6 +745,10 @@ export const StockChart: React.FC<StockChartProps> = ({
       ctx.lineWidth = 2;
       ctx.stroke();
     } else {
+      const isFootprintEligible = timeframe === '1M' || timeframe === '5M' || timeframe === '10M';
+      // Significant zoom-in threshold: candleWidth >= 38 pixels
+      const isFootprintActive = isFootprintEligible && candleWidth >= 38;
+
       for (let i = 0; i < visibleCandles.length; i++) {
         const c = visibleCandles[i];
         const x = indexToX(i);
@@ -735,22 +771,240 @@ export const StockChart: React.FC<StockChartProps> = ({
           candleColor = isUp ? '#22c55e' : '#ef4444'; // Regular trading green / red
         }
 
-        // Draw Wick
-        ctx.beginPath();
-        ctx.strokeStyle = candleColor;
-        ctx.lineWidth = 1;
-        ctx.moveTo(x, highY);
-        ctx.lineTo(x, lowY);
-        ctx.stroke();
+        if (isFootprintActive) {
+          // FOOTPRINT / ORDER FLOW CANDLE IMPLEMENTATION
+          // 1. Draw Central Wick Line
+          ctx.beginPath();
+          ctx.strokeStyle = candleColor;
+          ctx.lineWidth = 1.2;
+          ctx.moveTo(x, highY);
+          ctx.lineTo(x, lowY);
+          ctx.stroke();
 
-        // Draw Body
-        ctx.fillStyle = candleColor;
-        if (chartType === 'hollow' && isUp) {
+          // 2. Fetch or calculate footprint for this candle with active imbalance filter parameters
+          const cacheKey = `${c.time}_${c.volume}_${c.close}_${c.high}_${c.low}_${activeFpFilter.imbalanceRatio}_${activeFpFilter.imbalanceMode}_${activeFpFilter.minVolumeThreshold}`;
+          let fp = footprintCache.current.get(cacheKey);
+          if (!fp) {
+            fp = generateCandleFootprint(
+              c, 
+              level2Book, 
+              activeFpFilter.imbalanceRatio, 
+              activeFpFilter.imbalanceMode, 
+              activeFpFilter.minVolumeThreshold
+            );
+            footprintCache.current.set(cacheKey, fp);
+          }
+
+          const fpWidth = Math.min(candleWidth * 0.90, Math.max(34, bodyWidth));
+          const halfFpW = fpWidth / 2;
+          const leftX = x - halfFpW;
+          const rightX = x + halfFpW;
+          const candleSpanH = Math.max(4, lowY - highY);
+
+          // Subtle dark container background for footprint candle
+          ctx.fillStyle = isUp ? 'rgba(7, 20, 18, 0.92)' : 'rgba(24, 9, 12, 0.92)';
+          ctx.fillRect(leftX, highY, fpWidth, candleSpanH);
+
+          // Subtle body tint to distinguish candle body from wicks
+          ctx.fillStyle = isUp ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)';
+          ctx.fillRect(leftX, candleTop, fpWidth, candleHeight);
+
+          // Draw Open Notch on Left, Close Notch on Right
+          ctx.fillStyle = isUp ? '#22c55e' : '#ef4444';
+          ctx.fillRect(leftX - 3, openY - 1, 4, 2.5);
+          ctx.fillRect(rightX - 1, closeY - 1, 4, 2.5);
+
+          // Find max level volume to scale volume bars proportionally
+          let maxLevelVol = 1;
+          for (let li = 0; li < fp.levels.length; li++) {
+            if (fp.levels[li].totalVolume > maxLevelVol) {
+              maxLevelVol = fp.levels[li].totalVolume;
+            }
+          }
+
+          // Draw each price level ladder
+          for (let li = 0; li < fp.levels.length; li++) {
+            const lvl = fp.levels[li];
+            const lvlCenterY = priceToY(lvl.price);
+            const tickH = Math.max(9, Math.abs(priceToY(lvl.price) - priceToY(lvl.price + fp.tickSize)));
+            const topY = lvlCenterY - tickH / 2;
+            const bottomY = topY + tickH;
+
+            // Skip if completely outside viewport
+            if (bottomY < 0 || topY > pricePlotHeight) continue;
+
+            const bidBarW = (lvl.bidVolume / maxLevelVol) * (halfFpW - 1);
+            const askBarW = (lvl.askVolume / maxLevelVol) * (halfFpW - 1);
+
+            const isSellHighlighted = activeFpFilter.highlightImbalances && lvl.isSellImbalance;
+            const isBuyHighlighted = activeFpFilter.highlightImbalances && lvl.isBuyImbalance;
+
+            // Shaded Bid Volume bar (selling pressure) - emphasized if seller imbalance
+            ctx.fillStyle = isSellHighlighted 
+              ? 'rgba(239, 68, 68, 0.65)' 
+              : 'rgba(239, 68, 68, 0.18)';
+            ctx.fillRect(x - bidBarW, topY, bidBarW, tickH);
+
+            // Shaded Ask Volume bar (buying pressure) - emphasized if buyer imbalance
+            ctx.fillStyle = isBuyHighlighted 
+              ? 'rgba(34, 197, 94, 0.65)' 
+              : 'rgba(34, 197, 94, 0.18)';
+            ctx.fillRect(x, topY, askBarW, tickH);
+
+            // Border highlight around imbalanced side cell
+            if (isSellHighlighted) {
+              ctx.strokeStyle = 'rgba(248, 113, 113, 0.85)';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(x - halfFpW, topY, halfFpW, tickH);
+            }
+            if (isBuyHighlighted) {
+              ctx.strokeStyle = 'rgba(74, 222, 128, 0.85)';
+              ctx.lineWidth = 1;
+              ctx.strokeRect(x, topY, halfFpW, tickH);
+            }
+
+            // Level divider line
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+            ctx.lineWidth = 0.5;
+            ctx.beginPath();
+            ctx.moveTo(leftX, bottomY);
+            ctx.lineTo(rightX, bottomY);
+            ctx.stroke();
+
+            // Point of Control (POC) Level Outline
+            if (lvl.isPoc) {
+              ctx.strokeStyle = '#f59e0b';
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(leftX, topY, fpWidth, tickH);
+
+              // POC text tag if candle is wide enough
+              if (candleWidth >= 70) {
+                ctx.fillStyle = '#f59e0b';
+                ctx.font = 'bold 7px "JetBrains Mono", monospace';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('POC', leftX + 1.5, topY + tickH / 2);
+              }
+            }
+
+            // Render exact numerical Bid Volume x Ask Volume with high-visibility Imbalance Highlights
+            const showNumbers = (candleWidth >= 48 && tickH >= 8) || ((isBuyHighlighted || isSellHighlighted) && tickH >= 7);
+            if (showNumbers) {
+              const fontSize = candleWidth >= 80 ? 9 : candleWidth >= 58 ? 8 : 7.5;
+              const textY = topY + tickH / 2;
+
+              const bidStr = formatOrderFlowVolume(lvl.bidVolume);
+              const askStr = formatOrderFlowVolume(lvl.askVolume);
+
+              // 1. Left side: Bid volume (sellers hitting bid)
+              if (isSellHighlighted) {
+                // High-visibility badge behind the seller order number
+                ctx.font = `bold ${fontSize}px "JetBrains Mono", monospace`;
+                const textW = ctx.measureText(bidStr).width;
+                const badgeW = textW + 6;
+                const badgeH = Math.min(tickH - 1, fontSize + 5);
+                const badgeX = x - 2 - textW - 3;
+                const badgeY = textY - badgeH / 2;
+
+                // Vivid crimson highlight badge
+                ctx.fillStyle = '#b91c1c';
+                ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+                ctx.strokeStyle = '#f87171';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(bidStr, x - 2, textY);
+              } else if (candleWidth >= 52) {
+                ctx.font = `normal ${fontSize}px "JetBrains Mono", monospace`;
+                ctx.textAlign = 'right';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#cbd5e1';
+                ctx.fillText(bidStr, x - 2, textY);
+              }
+
+              // 2. Right side: Ask volume (buyers lifting ask)
+              if (isBuyHighlighted) {
+                // High-visibility badge behind the buyer order number
+                ctx.font = `bold ${fontSize}px "JetBrains Mono", monospace`;
+                const textW = ctx.measureText(askStr).width;
+                const badgeW = textW + 6;
+                const badgeH = Math.min(tickH - 1, fontSize + 5);
+                const badgeX = x + 2 - 3;
+                const badgeY = textY - badgeH / 2;
+
+                // Vivid emerald green highlight badge
+                ctx.fillStyle = '#15803d';
+                ctx.fillRect(badgeX, badgeY, badgeW, badgeH);
+                ctx.strokeStyle = '#4ade80';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(badgeX, badgeY, badgeW, badgeH);
+
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(askStr, x + 2, textY);
+              } else if (candleWidth >= 52) {
+                ctx.font = `normal ${fontSize}px "JetBrains Mono", monospace`;
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#cbd5e1';
+                ctx.fillText(askStr, x + 2, textY);
+              }
+            }
+          }
+
+          // Center dividing line between Bid and Ask
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.16)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(x, highY);
+          ctx.lineTo(x, lowY);
+          ctx.stroke();
+
+          // Candle Body Border: strictly drawn around the real body, leaving wicks clean without any border
+          ctx.strokeStyle = candleColor;
+          ctx.lineWidth = 1.5;
+          ctx.strokeRect(leftX, candleTop, fpWidth, candleHeight);
+
+          // Delta Summary Badge below the candle
+          const isPositiveDelta = fp.totalDelta >= 0;
+          const deltaText = `Δ ${isPositiveDelta ? '+' : ''}${formatOrderFlowVolume(fp.totalDelta)}`;
+          const deltaBadgeY = Math.min(pricePlotHeight - 14, lowY + 12);
+          const badgeW = Math.min(fpWidth, 42);
+
+          ctx.fillStyle = isPositiveDelta ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.25)';
+          ctx.fillRect(x - badgeW / 2, deltaBadgeY - 6, badgeW, 12);
+          ctx.strokeStyle = isPositiveDelta ? 'rgba(34, 197, 94, 0.7)' : 'rgba(239, 68, 68, 0.7)';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(x - badgeW / 2, deltaBadgeY - 6, badgeW, 12);
+
+          ctx.font = 'bold 8px "JetBrains Mono", monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = isPositiveDelta ? '#4ade80' : '#f87171';
+          ctx.fillText(deltaText, x, deltaBadgeY);
+        } else {
+          // Standard Candlestick rendering
+          // Draw Wick
+          ctx.beginPath();
           ctx.strokeStyle = candleColor;
           ctx.lineWidth = 1;
-          ctx.strokeRect(x - bodyWidth / 2, candleTop, bodyWidth, candleHeight);
-        } else {
-          ctx.fillRect(x - bodyWidth / 2, candleTop, bodyWidth, candleHeight);
+          ctx.moveTo(x, highY);
+          ctx.lineTo(x, lowY);
+          ctx.stroke();
+
+          // Draw Body
+          ctx.fillStyle = candleColor;
+          if (chartType === 'hollow' && isUp) {
+            ctx.strokeStyle = candleColor;
+            ctx.lineWidth = 1;
+            ctx.strokeRect(x - bodyWidth / 2, candleTop, bodyWidth, candleHeight);
+          } else {
+            ctx.fillRect(x - bodyWidth / 2, candleTop, bodyWidth, candleHeight);
+          }
         }
       }
     }
@@ -1136,17 +1390,184 @@ export const StockChart: React.FC<StockChartProps> = ({
       }
     }
 
+    // 10.5 Candlestick Bar Statistics (Delta & Volume Rows) below chart
+    if (showBarStats) {
+      const deltaRowY = plotHeight;
+      const volRowY = plotHeight + barStatsRowHeight;
+      const tableHeight = barStatsTableHeight;
+      const headerWidth = 56;
+
+      // 1. Calculate max absolute delta among visible candles for heatmap color scaling
+      let maxAbsDelta = 1;
+      const candleDeltas: number[] = new Array(visibleCandles.length);
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        const cacheKey = `${c.time}_${c.volume}_${c.close}_${c.high}_${c.low}_${activeFpFilter.imbalanceRatio}_${activeFpFilter.imbalanceMode}_${activeFpFilter.minVolumeThreshold}`;
+        let fp = footprintCache.current.get(cacheKey);
+        if (!fp) {
+          fp = generateCandleFootprint(
+            c, 
+            level2Book, 
+            activeFpFilter.imbalanceRatio, 
+            activeFpFilter.imbalanceMode, 
+            activeFpFilter.minVolumeThreshold
+          );
+          footprintCache.current.set(cacheKey, fp);
+        }
+        const delta = fp.totalDelta;
+        candleDeltas[i] = delta;
+        const absD = Math.abs(delta);
+        if (absD > maxAbsDelta) maxAbsDelta = absD;
+      }
+
+      // 2. Draw table columns for each visible candle
+      for (let i = 0; i < visibleCandles.length; i++) {
+        const c = visibleCandles[i];
+        const cellLeft = Math.round(i * candleWidth);
+        const cellRight = Math.round((i + 1) * candleWidth);
+        const cellW = cellRight - cellLeft;
+        const cellCenterX = cellLeft + cellW / 2;
+        const delta = candleDeltas[i];
+
+        // Delta Heatmap Cell Background
+        // Sky blue / navy for positive delta, maroon / burgundy for negative delta (matching reference image)
+        let deltaBg = '#141c28';
+        const ratio = Math.min(1, Math.abs(delta) / Math.max(1, maxAbsDelta));
+        if (delta > 0) {
+          if (ratio > 0.60) {
+            deltaBg = '#5490d5'; // Vivid sky blue for large positive delta (e.g. 623)
+          } else if (ratio > 0.28) {
+            deltaBg = '#274b78'; // Medium navy/steel blue (e.g. 142)
+          } else {
+            deltaBg = '#142234'; // Subtle dark navy (e.g. 25)
+          }
+        } else if (delta < 0) {
+          if (ratio > 0.60) {
+            deltaBg = '#741e24'; // Deep burgundy/crimson for large negative delta (e.g. -173, -180)
+          } else if (ratio > 0.28) {
+            deltaBg = '#47181c'; // Medium maroon
+          } else {
+            deltaBg = '#251215'; // Dark subtle maroon (e.g. -27)
+          }
+        }
+
+        ctx.fillStyle = deltaBg;
+        ctx.fillRect(cellLeft, deltaRowY, cellW, barStatsRowHeight);
+
+        // Volume Cell Background (Dark charcoal #1c2430 matching reference image)
+        ctx.fillStyle = '#1c2430';
+        ctx.fillRect(cellLeft, volRowY, cellW, barStatsRowHeight);
+
+        // Vertical column separator line
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(cellRight, deltaRowY);
+        ctx.lineTo(cellRight, deltaRowY + tableHeight);
+        ctx.stroke();
+
+        // Cell Text (Only render when cell is wide enough to avoid overlapping text)
+        if (candleWidth >= 16) {
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
+
+          // Delta text (bold white)
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(`${delta}`, cellCenterX, deltaRowY + barStatsRowHeight / 2);
+
+          // Volume text (light slate/white)
+          ctx.fillStyle = '#e2e8f0';
+          const volStr = formatCompactVolume(c.volume);
+          ctx.fillText(volStr, cellCenterX, volRowY + barStatsRowHeight / 2);
+        }
+      }
+
+      // 3. Horizontal table dividing lines
+      // Top boundary
+      ctx.beginPath();
+      ctx.strokeStyle = '#283344';
+      ctx.lineWidth = 1;
+      ctx.moveTo(0, deltaRowY);
+      ctx.lineTo(plotWidth, deltaRowY);
+      ctx.stroke();
+
+      // Dotted horizontal line separating Delta from Volume (matching reference image)
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.moveTo(0, volRowY);
+      ctx.lineTo(plotWidth, volRowY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Bottom boundary (separating Volume row from time axis)
+      ctx.beginPath();
+      ctx.strokeStyle = '#283344';
+      ctx.lineWidth = 1;
+      ctx.moveTo(0, timeAxisY);
+      ctx.lineTo(plotWidth, timeAxisY);
+      ctx.stroke();
+
+      // 4. Pinned Left Header Column (matches reference image: dark slate pinned header with "Delta" and "Volume")
+      ctx.fillStyle = '#263140';
+      ctx.fillRect(0, deltaRowY, headerWidth, tableHeight);
+
+      // Header labels
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#e2e8f0';
+      ctx.fillText('Delta', headerWidth / 2, deltaRowY + barStatsRowHeight / 2);
+      ctx.fillText('Volume', headerWidth / 2, volRowY + barStatsRowHeight / 2);
+
+      // Header dotted divider
+      ctx.beginPath();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 2]);
+      ctx.moveTo(0, volRowY);
+      ctx.lineTo(headerWidth, volRowY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Header right border
+      ctx.beginPath();
+      ctx.strokeStyle = '#3a4759';
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(headerWidth, deltaRowY);
+      ctx.lineTo(headerWidth, deltaRowY + tableHeight);
+      ctx.stroke();
+
+      // 5. Right axis area next to bar stats table
+      ctx.fillStyle = '#101723';
+      ctx.fillRect(plotWidth, deltaRowY, rightAxisWidth, tableHeight);
+      ctx.beginPath();
+      ctx.strokeStyle = '#222f42';
+      ctx.setLineDash([2, 2]);
+      ctx.moveTo(plotWidth, volRowY);
+      ctx.lineTo(plotWidth + rightAxisWidth, volRowY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.strokeStyle = '#222f42';
+      ctx.moveTo(plotWidth, timeAxisY);
+      ctx.lineTo(plotWidth + rightAxisWidth, timeAxisY);
+      ctx.stroke();
+    }
+
     // 11. Draw Interactive Crosshair & Cursor HUD
     if (hoverPos && hoverPos.x < plotWidth && hoverPos.y < plotHeight) {
       const cursorPrice = yToPrice(hoverPos.y);
 
-      // Vertical dashed line
+      // Vertical dashed line down through plot and bar stats
       ctx.beginPath();
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
       ctx.lineWidth = 1;
       ctx.setLineDash([3, 3]);
       ctx.moveTo(hoverPos.x, 0);
-      ctx.lineTo(hoverPos.x, plotHeight);
+      ctx.lineTo(hoverPos.x, timeAxisY);
       ctx.stroke();
 
       // Horizontal dashed line
@@ -1182,28 +1603,28 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.font = '10px "JetBrains Mono", monospace';
         const badgeW = Math.max(64, ctx.measureText(timeText).width + 16);
         ctx.fillStyle = badgeBg;
-        ctx.fillRect(hoverPos.x - badgeW / 2, plotHeight, badgeW, 18);
+        ctx.fillRect(hoverPos.x - badgeW / 2, timeAxisY + 2, badgeW, 18);
         ctx.fillStyle = '#ffffff';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(timeText, hoverPos.x, plotHeight + 9);
+        ctx.fillText(timeText, hoverPos.x, timeAxisY + 11);
       }
     }
 
     // 12. Draw "AUTO" button at the bottom-right corner
     const isCustomScale = priceScaleFactor !== 1.0 || verticalPanOffset !== 0 || zoomLevel !== 1.0 || panOffset !== 0;
-    const isOverAuto = hoverPos && hoverPos.x >= plotWidth && hoverPos.y >= plotHeight;
+    const isOverAuto = hoverPos && hoverPos.x >= plotWidth && hoverPos.y >= timeAxisY;
 
     ctx.fillStyle = isOverAuto ? '#1e293b' : isCustomScale ? '#172554' : '#111827';
-    ctx.fillRect(plotWidth + 4, plotHeight + 3, rightAxisWidth - 8, bottomAxisHeight - 6);
+    ctx.fillRect(plotWidth + 4, timeAxisY + 2, rightAxisWidth - 8, timeAxisHeight - 4);
     ctx.strokeStyle = isCustomScale ? '#38bdf8' : '#232f46';
-    ctx.strokeRect(plotWidth + 4, plotHeight + 3, rightAxisWidth - 8, bottomAxisHeight - 6);
+    ctx.strokeRect(plotWidth + 4, timeAxisY + 2, rightAxisWidth - 8, timeAxisHeight - 4);
 
     ctx.font = 'bold 9px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = isCustomScale ? '#38bdf8' : '#64748b';
-    ctx.fillText('AUTO', plotWidth + rightAxisWidth / 2, plotHeight + bottomAxisHeight / 2);
+    ctx.fillText('AUTO', plotWidth + rightAxisWidth / 2, timeAxisY + timeAxisHeight / 2);
 
     // 13. Top Chart HUD Metrics & Exact Bar Label
     const isHoveringPlot = hoverPos && hoverPos.x >= 0 && hoverPos.x < plotWidth && hoverPos.y >= 0 && hoverPos.y < plotHeight;
@@ -1363,8 +1784,38 @@ export const StockChart: React.FC<StockChartProps> = ({
         const highY = priceToY(activeCandle.high);
         const lowY = priceToY(activeCandle.low);
 
-        const cardW = 236;
-        const cardH = 46;
+        const isFpActive = (timeframe === '1M' || timeframe === '5M' || timeframe === '10M') && candleWidth >= 38;
+        const cacheKey = `${activeCandle.time}_${activeCandle.volume}_${activeCandle.close}_${activeCandle.high}_${activeCandle.low}_${activeFpFilter.imbalanceRatio}_${activeFpFilter.imbalanceMode}_${activeFpFilter.minVolumeThreshold}`;
+        const activeFp = isFpActive 
+          ? (footprintCache.current.get(cacheKey) || generateCandleFootprint(activeCandle, level2Book, activeFpFilter.imbalanceRatio, activeFpFilter.imbalanceMode, activeFpFilter.minVolumeThreshold)) 
+          : null;
+
+        let hoveredLevelInfo = '';
+        let hoveredImbSide: 'buy' | 'sell' | null = null;
+        let hoveredRatio = 0;
+        if (isFpActive && activeFp && hoverPos) {
+          for (const lvl of activeFp.levels) {
+            const lvlY = priceToY(lvl.price);
+            const tickH = Math.max(9, Math.abs(priceToY(lvl.price) - priceToY(lvl.price + activeFp.tickSize)));
+            if (Math.abs(hoverPos.y - lvlY) <= tickH / 2) {
+              if (lvl.isBuyImbalance) {
+                hoveredImbSide = 'buy';
+                hoveredRatio = lvl.buyImbalanceRatio || (lvl.askVolume / Math.max(1, lvl.bidVolume));
+              } else if (lvl.isSellImbalance) {
+                hoveredImbSide = 'sell';
+                hoveredRatio = lvl.sellImbalanceRatio || (lvl.bidVolume / Math.max(1, lvl.askVolume));
+              }
+              hoveredLevelInfo = `$${lvl.price.toFixed(4)}: ${formatOrderFlowVolume(lvl.bidVolume)} × ${formatOrderFlowVolume(lvl.askVolume)}`;
+              break;
+            }
+          }
+        }
+
+        const buyImbCount = activeFp ? activeFp.levels.filter(l => l.isBuyImbalance).length : 0;
+        const sellImbCount = activeFp ? activeFp.levels.filter(l => l.isSellImbalance).length : 0;
+
+        const cardW = isFpActive ? 286 : 236;
+        const cardH = isFpActive ? (hoveredLevelInfo || buyImbCount > 0 || sellImbCount > 0 ? 80 : 64) : 46;
         let cardX = barX - cardW / 2;
         cardX = Math.max(10, Math.min(plotWidth - cardW - 10, cardX));
         
@@ -1419,6 +1870,39 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.fillText(`C:`, rowX, rowY);
         ctx.fillStyle = barThemeColor;
         ctx.fillText(activeCandle.close.toFixed(4), rowX + 13, rowY);
+
+        // Footprint Order Flow Row 3 (Delta & POC readout)
+        if (isFpActive && activeFp) {
+          const rowY2 = cardY + 42;
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          ctx.textAlign = 'left';
+          ctx.fillStyle = activeFp.totalDelta >= 0 ? '#4ade80' : '#f87171';
+          ctx.fillText(`Δ Delta: ${activeFp.totalDelta >= 0 ? '+' : ''}${formatOrderFlowVolume(activeFp.totalDelta)} (${activeFp.deltaPercent > 0 ? '+' : ''}${activeFp.deltaPercent}%)`, cardX + 8, rowY2);
+
+          ctx.fillStyle = '#f59e0b';
+          ctx.fillText(`POC: $${activeFp.pocPrice.toFixed(4)}`, cardX + 175, rowY2);
+
+          // Footprint Order Flow Row 4 (Imbalance info on hovered level or candle summary)
+          if (hoveredLevelInfo || buyImbCount > 0 || sellImbCount > 0) {
+            const rowY3 = cardY + 60;
+            ctx.font = 'bold 9px "JetBrains Mono", monospace';
+            if (hoveredLevelInfo) {
+              if (hoveredImbSide === 'buy') {
+                ctx.fillStyle = '#4ade80';
+                ctx.fillText(`⚡ ${hoveredLevelInfo} [${hoveredRatio.toFixed(1)}x BUY IMBALANCE]`, cardX + 8, rowY3);
+              } else if (hoveredImbSide === 'sell') {
+                ctx.fillStyle = '#f87171';
+                ctx.fillText(`⚡ ${hoveredLevelInfo} [${hoveredRatio.toFixed(1)}x SELL IMBALANCE]`, cardX + 8, rowY3);
+              } else {
+                ctx.fillStyle = '#94a3b8';
+                ctx.fillText(`Lvl ${hoveredLevelInfo}`, cardX + 8, rowY3);
+              }
+            } else {
+              ctx.fillStyle = '#f59e0b';
+              ctx.fillText(`⚡ ${activeFpFilter.imbalanceRatio}x Imbalances: ${buyImbCount} Buys · ${sellImbCount} Sells`, cardX + 8, rowY3);
+            }
+          }
+        }
 
         // Also draw exact Close Price Tag on right Y-Axis
         const closeY = priceToY(activeCandle.close);
@@ -1480,7 +1964,10 @@ export const StockChart: React.FC<StockChartProps> = ({
     dragMode,
     panOffset,
     timeToX,
-    candles
+    candles,
+    level2Book,
+    showBarStats,
+    barStatsTableHeight
   ]);
 
   // Handle Resize & Canvas Scaling via ResizeObserver
@@ -1597,15 +2084,16 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     const plotWidth = rect.width - rightAxisWidth;
     const plotHeight = rect.height - bottomAxisHeight;
+    const timeAxisY = plotHeight + barStatsTableHeight;
 
     // Check Auto button click
-    if (x >= plotWidth && y >= plotHeight) {
+    if (x >= plotWidth && y >= timeAxisY) {
       handleResetAutoScale();
       return;
     }
 
     // Check Right Y-Axis drag (stretch/contract price)
-    if (x >= plotWidth && y < plotHeight) {
+    if (x >= plotWidth && y < timeAxisY) {
       setDragMode('scale-price');
       setDragStartPos({ x: e.clientX, y: e.clientY });
       setStartPriceScale(priceScaleFactor);
@@ -1749,7 +2237,7 @@ export const StockChart: React.FC<StockChartProps> = ({
     setPriceScaleFactor(prev => Math.min(15.0, prev * 1.25));
   };
   const handleStretchTime = () => {
-    onZoomChange(Math.min(6.5, zoomLevel * 1.25));
+    onZoomChange(Math.min(35.0, zoomLevel * 1.25));
   };
   const handleContractTime = () => {
     onZoomChange(Math.max(0.18, zoomLevel * 0.8));
@@ -2059,7 +2547,7 @@ export const StockChart: React.FC<StockChartProps> = ({
 
     // Default wheel on chart: zoom/stretch time
     if (e.deltaY < 0) {
-      onZoomChange(Math.min(6.5, zoomLevel * 1.15));
+      onZoomChange(Math.min(35.0, zoomLevel * 1.15));
     } else {
       onZoomChange(Math.max(0.18, zoomLevel / 1.15));
     }
@@ -2197,7 +2685,7 @@ export const StockChart: React.FC<StockChartProps> = ({
       )}
 
       {/* Floating Scale & Axis Stretch/Contract Dock */}
-      <div className="absolute bottom-9 right-20 flex items-center bg-[#101726]/90 border border-[#223147] rounded-md backdrop-blur-xs shadow-xl divide-x divide-[#1e2b3e] text-xs z-20 overflow-hidden">
+      <div className={`absolute ${showBarStats ? 'bottom-[66px]' : 'bottom-9'} right-20 flex items-center bg-[#101726]/90 border border-[#223147] rounded-md backdrop-blur-xs shadow-xl divide-x divide-[#1e2b3e] text-xs z-20 overflow-hidden`}>
         {/* Price Axis Stretch / Contract Buttons */}
         <div className="flex items-center px-2 py-1 gap-1 text-slate-300">
           <span className="text-[10px] font-mono text-slate-400 font-bold" title="Stretch / Contract Price Axis">
@@ -2240,6 +2728,30 @@ export const StockChart: React.FC<StockChartProps> = ({
           </button>
         </div>
 
+        {/* Footprint Indicator / Zoom to Footprint Button on 1M, 5M, 10M */}
+        {(timeframe === '1M' || timeframe === '5M' || timeframe === '10M') && (
+          <button
+            onClick={() => {
+              if (onZoomToFootprint) {
+                onZoomToFootprint();
+              } else {
+                const targetZoom = Math.max(2.5, (candles.length || 1) / 14);
+                onZoomChange(targetZoom);
+                setPanOffset(0);
+              }
+            }}
+            className={`px-2 py-1 font-mono text-[10px] font-semibold transition-all flex items-center gap-1.5 ${
+              isFootprintZoomActive
+                ? 'text-emerald-400 bg-emerald-950/40 hover:bg-emerald-900/50'
+                : 'text-sky-400 bg-sky-950/40 hover:bg-sky-900/50'
+            }`}
+            title={isFootprintZoomActive ? "Footprint Order Flow Active (Bid x Ask / Imbalances)" : "Zoom In to Footprint Order Flow View"}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${isFootprintZoomActive ? 'bg-emerald-400 animate-pulse' : 'bg-sky-400'}`} />
+            <span>{isFootprintZoomActive ? 'FOOTPRINT ON' : 'ZOOM FOOTPRINT'}</span>
+          </button>
+        )}
+
         {/* Reset to Auto Button */}
         <button
           onClick={handleResetAutoScale}
@@ -2256,7 +2768,7 @@ export const StockChart: React.FC<StockChartProps> = ({
       {/* Floating Drag Direction Mode toggle */}
       <button
         onClick={() => setInvertDrag(!invertDrag)}
-        className="absolute bottom-9 left-3 px-2.5 py-1 rounded bg-[#141d2c]/90 hover:bg-[#1d2a3f] text-slate-300 hover:text-white border border-[#23334a] text-[10px] font-mono backdrop-blur-xs transition-all flex items-center gap-1.5 z-20 shadow-md"
+        className={`absolute ${showBarStats ? 'bottom-[66px]' : 'bottom-9'} left-3 px-2.5 py-1 rounded bg-[#141d2c]/90 hover:bg-[#1d2a3f] text-slate-300 hover:text-white border border-[#23334a] text-[10px] font-mono backdrop-blur-xs transition-all flex items-center gap-1.5 z-20 shadow-md`}
         title="Toggle Drag Direction (Inverted: Mouse left → Chart right, Mouse upside → Chart downside)"
       >
         <span className="text-slate-400">Drag:</span>
