@@ -2,7 +2,9 @@ import React, { useRef, useEffect, useState, useMemo, useCallback } from 'react'
 import { 
   Trash2, 
   GripVertical, 
-  X 
+  X,
+  Ruler,
+  Target 
 } from 'lucide-react';
 import { 
   Candle, 
@@ -383,6 +385,73 @@ export const StockChart: React.FC<StockChartProps> = ({
         if (distTrend < minDiff) {
           minDiff = distTrend;
           closest = d;
+        }
+      } else if (d.type === 'ruler' && d.points.length >= 2) {
+        const p1 = d.points[0];
+        const p2 = d.points[1];
+        const x1 = timeToX(p1.time);
+        const y1 = priceToY(p1.price);
+        const x2 = timeToX(p2.time);
+        const y2 = priceToY(p2.price);
+
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2);
+        const maxY = Math.max(y1, y2);
+
+        // Check if inside ruler rectangle (with generous margin)
+        if (x >= minX - 8 && x <= maxX + 8 && y >= minY - 8 && y <= maxY + 8) {
+          return d;
+        }
+
+        // Check if on the measurement label badge at (x2 + 4, y2 - 14, 150, 28)
+        if (x >= x2 + 2 && x <= x2 + 158 && y >= y2 - 18 && y <= y2 + 22) {
+          return d;
+        }
+
+        // Check distance to boundary edges
+        const d1 = distToSegment(x, y, minX, minY, maxX, minY);
+        const d2 = distToSegment(x, y, maxX, minY, maxX, maxY);
+        const d3 = distToSegment(x, y, maxX, maxY, minX, maxY);
+        const d4 = distToSegment(x, y, minX, maxY, minX, minY);
+        if (Math.min(d1, d2, d3, d4) <= tolerance + 6) {
+          return d;
+        }
+      } else if (d.type === 'position' && d.points.length >= 2) {
+        const p1 = d.points[0];
+        const p2 = d.points[1];
+        const p3 = d.points[2] || p1;
+        const x1 = timeToX(p1.time);
+        const y1 = priceToY(p1.price);
+        const x2 = timeToX(p2.time);
+        const y2 = priceToY(p2.price);
+        const y3 = priceToY(p3.price);
+
+        const minX = Math.min(x1, x2);
+        const maxX = Math.max(x1, x2);
+        const minY = Math.min(y1, y2, y3);
+        const maxY = Math.max(y1, y2, y3);
+
+        // Check if inside position bounding box (target + stop)
+        if (x >= minX - 8 && x <= maxX + 8 && y >= minY - 8 && y <= maxY + 8) {
+          return d;
+        }
+
+        // Check if on badge area
+        const badgeX = maxX + 8;
+        const badgeY = y1 - 26;
+        const badgeW = 168;
+        const badgeH = 52;
+        if (x >= badgeX - 8 && x <= badgeX + badgeW + 8 && y >= badgeY - 8 && y <= badgeY + badgeH + 8) {
+          return d;
+        }
+
+        // Check distance to key horizontal levels (Entry, Target, Stop)
+        const dEntry = distToSegment(x, y, minX, y1, maxX, y1);
+        const dTarget = distToSegment(x, y, minX, y2, maxX, y2);
+        const dStop = distToSegment(x, y, minX, y3, maxX, y3);
+        if (Math.min(dEntry, dTarget, dStop) <= tolerance + 6) {
+          return d;
         }
       }
     }
@@ -1045,26 +1114,6 @@ export const StockChart: React.FC<StockChartProps> = ({
               // Highlight outline around the stack levels
               ctx.fillStyle = isStBuy ? 'rgba(34, 197, 94, 0.14)' : 'rgba(239, 68, 68, 0.14)';
               ctx.fillRect(leftX, stTopY, fpWidth, stH);
-
-              // Bracket Stack Badge
-              if (candleWidth >= 50) {
-                const badgeText = `⚡ ${st.count}x ${isStBuy ? 'BUY' : 'SELL'}`;
-                ctx.font = 'bold 7.5px "JetBrains Mono", monospace';
-                const bW = ctx.measureText(badgeText).width + 6;
-                const bX = isStBuy ? rightX + 6 : leftX - bW - 6;
-                const bY = stTopY + stH / 2 - 6;
-
-                ctx.fillStyle = isStBuy ? '#15803d' : '#b91c1c';
-                ctx.fillRect(bX, bY, bW, 12);
-                ctx.strokeStyle = isStBuy ? '#4ade80' : '#f87171';
-                ctx.lineWidth = 0.8;
-                ctx.strokeRect(bX, bY, bW, 12);
-
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillStyle = '#ffffff';
-                ctx.fillText(badgeText, bX + bW / 2, bY + 6);
-              }
             }
           }
 
@@ -1195,26 +1244,7 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        // 3. Label at Origin Candle
-        if (originX >= 0 && originX <= plotWidth - 45) {
-          const originLabel = `⚡ ${stack.count}x ${isBuy ? 'BUY' : 'SELL'} STACK`;
-          ctx.font = 'bold 8px "JetBrains Mono", monospace';
-          const labelW = ctx.measureText(originLabel).width + 8;
-          const labelY = Math.max(10, yTop - 12);
-          
-          ctx.fillStyle = isBuy ? 'rgba(21, 128, 61, 0.90)' : 'rgba(185, 28, 28, 0.90)';
-          ctx.fillRect(originX, labelY, labelW, 11);
-          ctx.strokeStyle = isBuy ? '#4ade80' : '#f87171';
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(originX, labelY, labelW, 11);
-
-          ctx.textAlign = 'left';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle = '#ffffff';
-          ctx.fillText(originLabel, originX + 4, labelY + 5.5);
-        }
-
-        // 4. Terminus on the NEXT Candle that reaches those key levels
+        // 3. Terminus on the NEXT Candle that reaches those key levels
         if (isMitigated && reachedRelIdx !== null && reachedX >= 0 && reachedX <= plotWidth) {
           // Vertical stop tick marking candle reach
           ctx.beginPath();
@@ -1234,9 +1264,9 @@ export const StockChart: React.FC<StockChartProps> = ({
           ctx.lineWidth = 1.2;
           ctx.stroke();
 
-          // Retested / Mitigated label badge on the reaching candle
-          ctx.font = 'bold 8px "JetBrains Mono", monospace';
-          const testText = `🎯 TESTED ${stack.mitigatedCandleTimeStr ?? ''}`;
+          // Tested label badge on the reaching candle (without hour)
+          ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+          const testText = 'TESTED';
           const badgeW = ctx.measureText(testText).width + 8;
           let badgeX = reachedX + 6;
           if (badgeX + badgeW > plotWidth) {
@@ -1537,24 +1567,249 @@ export const StockChart: React.FC<StockChartProps> = ({
         const x2 = timeToX(p2.time, width);
         const y2 = priceToY(p2.price);
 
+        const isSelected = selectedDrawingId === d.id || hoveredDrawingId === d.id;
         const deltaPrice = p2.price - p1.price;
         const deltaPct = (deltaPrice / p1.price) * 100;
         const idx1 = findCandleIndexByTime(candles, p1.time);
         const idx2 = findCandleIndexByTime(candles, p2.time);
         const barsCount = Math.abs(idx2 - idx1);
 
+        const rectX = Math.min(x1, x2);
+        const rectY = Math.min(y1, y2);
+        const rectW = Math.abs(x2 - x1);
+        const rectH = Math.abs(y2 - y1);
+
         ctx.fillStyle = deltaPrice >= 0 ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)';
-        ctx.fillRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+        ctx.fillRect(rectX, rectY, rectW, rectH);
 
-        ctx.strokeStyle = deltaPrice >= 0 ? '#22c55e' : '#ef4444';
-        ctx.strokeRect(Math.min(x1, x2), Math.min(y1, y2), Math.abs(x2 - x1), Math.abs(y2 - y1));
+        ctx.strokeStyle = deltaPrice >= 0 ? (isSelected ? '#4ade80' : '#22c55e') : (isSelected ? '#f87171' : '#ef4444');
+        ctx.lineWidth = isSelected ? 2 : 1.2;
+        if (isSelected) {
+          ctx.setLineDash([4, 3]);
+        }
+        ctx.strokeRect(rectX, rectY, rectW, rectH);
+        ctx.setLineDash([]);
 
-        ctx.fillStyle = '#0f172a';
-        ctx.fillRect(x2 + 4, y2 - 14, 130, 28);
-        ctx.fillStyle = '#ffffff';
-        ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.fillText(`${deltaPrice >= 0 ? '+' : ''}${deltaPrice.toFixed(4)} (${deltaPct.toFixed(2)}%)`, x2 + 8, y2 - 2);
-        ctx.fillText(`${barsCount} bars`, x2 + 8, y2 + 10);
+        // Anchor handles when selected
+        if (isSelected) {
+          ctx.fillStyle = '#ffffff';
+          ctx.strokeStyle = deltaPrice >= 0 ? '#22c55e' : '#ef4444';
+          ctx.lineWidth = 2;
+          for (const [hx, hy] of [[x1, y1], [x2, y2]]) {
+            ctx.beginPath();
+            ctx.arc(hx, hy, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+
+        // Measurement badge
+        const badgeW = 160;
+        const badgeH = 34;
+        const badgeX = x2 + badgeW + 8 > plotWidth ? Math.max(8, x2 - badgeW - 8) : x2 + 6;
+        const badgeY = Math.max(8, Math.min(plotHeight - badgeH - 8, y2 - 17));
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+        ctx.fill();
+
+        ctx.strokeStyle = isSelected ? (deltaPrice >= 0 ? '#4ade80' : '#f87171') : 'rgba(71, 85, 105, 0.8)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = deltaPrice >= 0 ? '#4ade80' : '#f87171';
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.fillText(`${deltaPrice >= 0 ? '+' : ''}${deltaPrice.toFixed(4)} (${deltaPct >= 0 ? '+' : ''}${deltaPct.toFixed(2)}%)`, badgeX + 8, badgeY + 11);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.fillText(`${barsCount} bars · ✕ to remove`, badgeX + 8, badgeY + 23);
+
+        // Clickable ✕ Remove button on the badge
+        const closeBtnX = badgeX + badgeW - 22;
+        const closeBtnY = badgeY + 7;
+        const closeBtnSize = 18;
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+        ctx.beginPath();
+        ctx.roundRect(closeBtnX, closeBtnY, closeBtnSize, closeBtnSize, 4);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.strokeStyle = '#fca5a5';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(closeBtnX + 5, closeBtnY + 5);
+        ctx.lineTo(closeBtnX + closeBtnSize - 5, closeBtnY + closeBtnSize - 5);
+        ctx.moveTo(closeBtnX + closeBtnSize - 5, closeBtnY + 5);
+        ctx.lineTo(closeBtnX + 5, closeBtnY + closeBtnSize - 5);
+        ctx.stroke();
+      } else if (d.type === 'position' && d.points.length >= 2) {
+        const p1 = d.points[0];
+        const p2 = d.points[1];
+        const p3 = d.points[2] || p1;
+
+        const x1 = timeToX(p1.time, width);
+        const y1 = priceToY(p1.price);
+        const x2 = timeToX(p2.time, width);
+        const y2 = priceToY(p2.price);
+        const y3 = d.points.length >= 3 ? priceToY(p3.price) : y1;
+
+        const leftX = Math.min(x1, x2);
+        const rightX = Math.max(x1, x2);
+        const boxW = Math.max(16, rightX - leftX);
+
+        const isLong = p2.price >= p1.price;
+        const targetDelta = Math.abs(p2.price - p1.price);
+        const targetPct = p1.price > 0 ? (targetDelta / p1.price) * 100 : 0;
+        const stopDelta = d.points.length >= 3 ? Math.abs(p3.price - p1.price) : 0;
+        const stopPct = p1.price > 0 ? (stopDelta / p1.price) * 100 : 0;
+        const rr = stopDelta > 0 ? (targetDelta / stopDelta) : 0;
+
+        const isSelected = selectedDrawingId === d.id || hoveredDrawingId === d.id;
+
+        // 1. Target Rectangle (Profit Zone)
+        const targetTopY = Math.min(y1, y2);
+        const targetHeight = Math.abs(y2 - y1);
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.18)';
+        ctx.fillRect(leftX, targetTopY, boxW, targetHeight);
+        ctx.strokeStyle = isSelected ? '#4ade80' : '#22c55e';
+        ctx.lineWidth = isSelected ? 2 : 1.2;
+        ctx.strokeRect(leftX, targetTopY, boxW, targetHeight);
+
+        // Diagonal from point 1 to point 2 (Target diagonal)
+        ctx.beginPath();
+        ctx.strokeStyle = 'rgba(74, 222, 128, 0.45)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Target Price Level Text
+        ctx.fillStyle = '#4ade80';
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = isLong ? 'bottom' : 'top';
+        ctx.fillText(`TARGET: $${p2.price.toFixed(2)} (+${targetDelta.toFixed(2)} / +${targetPct.toFixed(2)}%)`, leftX + 4, isLong ? targetTopY - 3 : targetTopY + targetHeight + 11);
+
+        // 2. Stop Loss Rectangle (Risk Zone)
+        if (d.points.length >= 3) {
+          const stopTopY = Math.min(y1, y3);
+          const stopHeight = Math.abs(y3 - y1);
+          ctx.fillStyle = 'rgba(239, 68, 68, 0.18)';
+          ctx.fillRect(leftX, stopTopY, boxW, stopHeight);
+          ctx.strokeStyle = isSelected ? '#f87171' : '#ef4444';
+          ctx.lineWidth = isSelected ? 2 : 1.2;
+          ctx.strokeRect(leftX, stopTopY, boxW, stopHeight);
+
+          // Diagonal guideline from point 1 to point 3 (Stop height extension)
+          ctx.beginPath();
+          ctx.strokeStyle = 'rgba(248, 113, 113, 0.45)';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([3, 3]);
+          ctx.moveTo(x1, y1);
+          ctx.lineTo(x2, y3);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          // Stop Price Level Text
+          ctx.fillStyle = '#f87171';
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          ctx.textAlign = 'left';
+          ctx.textBaseline = isLong ? 'top' : 'bottom';
+          ctx.fillText(`STOP: $${p3.price.toFixed(2)} (-${stopDelta.toFixed(2)} / -${stopPct.toFixed(2)}%)`, leftX + 4, isLong ? stopTopY + stopHeight + 11 : stopTopY - 3);
+        }
+
+        // 3. Entry Center Line
+        ctx.beginPath();
+        ctx.strokeStyle = isSelected ? '#ffffff' : '#94a3b8';
+        ctx.lineWidth = 1.5;
+        ctx.moveTo(leftX, y1);
+        ctx.lineTo(rightX, y1);
+        ctx.stroke();
+
+        ctx.fillStyle = '#e2e8f0';
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(`ENTRY: $${p1.price.toFixed(2)}`, leftX + 4, y1 - 8);
+
+        // 4. Anchor Handles if Selected
+        if (isSelected) {
+          const handles = [
+            { x: x1, y: y1, color: '#e2e8f0' },
+            { x: x2, y: y2, color: '#22c55e' },
+            ...(d.points.length >= 3 ? [{ x: x2, y: y3, color: '#ef4444' }] : [])
+          ];
+          for (const h of handles) {
+            ctx.fillStyle = '#ffffff';
+            ctx.strokeStyle = h.color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(h.x, h.y, 4.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          }
+        }
+
+        // 5. Position Stats Badge with ✕ Delete button
+        const badgeW = 168;
+        const badgeH = 52;
+        const badgeX = rightX + badgeW + 8 > plotWidth ? Math.max(8, rightX - badgeW - 8) : rightX + 6;
+        const badgeY = Math.max(8, Math.min(plotHeight - badgeH - 8, y1 - 26));
+
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.beginPath();
+        ctx.roundRect(badgeX, badgeY, badgeW, badgeH, 6);
+        ctx.fill();
+
+        ctx.strokeStyle = isSelected ? (isLong ? '#4ade80' : '#f87171') : 'rgba(71, 85, 105, 0.8)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Badge Content
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = isLong ? '#4ade80' : '#f87171';
+        ctx.font = 'bold 10px "JetBrains Mono", monospace';
+        ctx.fillText(isLong ? '● LONG POSITION' : '● SHORT POSITION', badgeX + 8, badgeY + 12);
+
+        ctx.fillStyle = '#38bdf8';
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        ctx.fillText(`R:R: 1 : ${rr.toFixed(2)}`, badgeX + 8, badgeY + 26);
+
+        ctx.fillStyle = '#94a3b8';
+        ctx.font = '8.5px "JetBrains Mono", monospace';
+        ctx.fillText(`T: +$${targetDelta.toFixed(2)} | S: -$${stopDelta.toFixed(2)}`, badgeX + 8, badgeY + 39);
+
+        // Clickable ✕ Remove button on the badge
+        const closeBtnX = badgeX + badgeW - 22;
+        const closeBtnY = badgeY + 7;
+        const closeBtnSize = 18;
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.25)';
+        ctx.beginPath();
+        ctx.roundRect(closeBtnX, closeBtnY, closeBtnSize, closeBtnSize, 4);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.7)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        ctx.strokeStyle = '#fca5a5';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(closeBtnX + 5, closeBtnY + 5);
+        ctx.lineTo(closeBtnX + closeBtnSize - 5, closeBtnY + closeBtnSize - 5);
+        ctx.moveTo(closeBtnX + closeBtnSize - 5, closeBtnY + 5);
+        ctx.lineTo(closeBtnX + 5, closeBtnY + closeBtnSize - 5);
+        ctx.stroke();
       }
     }
 
@@ -1670,7 +1925,153 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.lineTo(x2, y2);
         ctx.stroke();
         ctx.setLineDash([]);
+      } else if (activeTool === 'position') {
+        const leftX = Math.min(x1, x2);
+        const rightX = Math.max(x1, x2);
+        const topY = Math.min(y1, y2);
+        const boxW = Math.max(16, rightX - leftX);
+        const boxH = Math.abs(y2 - y1);
+        const isTargetUp = p2Price >= p1.price;
+
+        ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
+        ctx.fillRect(leftX, topY, boxW, boxH);
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(leftX, topY, boxW, boxH);
+
+        // Diagonal from point 1 to point 2
+        ctx.beginPath();
+        ctx.strokeStyle = '#4ade80';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([4, 4]);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Anchor dots
+        ctx.fillStyle = '#22c55e';
+        ctx.beginPath();
+        ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+        ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Target Banner
+        const diffP = Math.abs(p2Price - p1.price);
+        const diffPct = p1.price > 0 ? (diffP / p1.price) * 100 : 0;
+        const banner = `Step 2: Target $${p2Price.toFixed(2)} (${isTargetUp ? '+' : '-'}${diffP.toFixed(2)} / ${isTargetUp ? '+' : '-'}${diffPct.toFixed(2)}%) · Click diagonal point 2`;
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        const bW = ctx.measureText(banner).width + 16;
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+        ctx.fillRect(x2 + 8, y2 - 20, bW, 20);
+        ctx.strokeStyle = '#22c55e';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x2 + 8, y2 - 20, bW, 20);
+        ctx.fillStyle = '#4ade80';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(banner, x2 + 14, y2 - 10);
       }
+    }
+
+    // 10c. Draw in-progress preview for Point 3 of Position Tool (Stop Loss height extension)
+    if (currentDrawingPoints.length === 2 && hoverPos && hoverPos.x < plotWidth && hoverPos.y < plotHeight && activeTool === 'position') {
+      const p1 = currentDrawingPoints[0];
+      const p2 = currentDrawingPoints[1];
+      const candleWidth = plotWidth / (visibleCandles.length || 1);
+      const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)));
+      const targetCandle = visibleCandles[candleIdx];
+      let targetPrice = yToPrice(hoverPos.y);
+
+      if (magnetMode && targetCandle) {
+        const candidates = [targetCandle.high, targetCandle.low, targetCandle.open, targetCandle.close];
+        let closest = candidates[0];
+        let minDiff = Math.abs(targetPrice - candidates[0]);
+        for (const c of candidates) {
+          const diff = Math.abs(targetPrice - c);
+          if (diff < minDiff) {
+            minDiff = diff;
+            closest = c;
+          }
+        }
+        targetPrice = closest;
+      }
+
+      const p3Price = Math.round(targetPrice * 10000) / 10000;
+      const x1 = timeToX(p1.time, width);
+      const y1 = priceToY(p1.price);
+      const x2 = timeToX(p2.time, width);
+      const y2 = priceToY(p2.price);
+      const y3 = priceToY(p3Price);
+
+      const leftX = Math.min(x1, x2);
+      const rightX = Math.max(x1, x2);
+      const boxW = Math.max(16, rightX - leftX);
+
+      // 1. Fixed Target Rectangle
+      const targetTopY = Math.min(y1, y2);
+      const targetHeight = Math.abs(y2 - y1);
+      ctx.fillStyle = 'rgba(34, 197, 94, 0.2)';
+      ctx.fillRect(leftX, targetTopY, boxW, targetHeight);
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(leftX, targetTopY, boxW, targetHeight);
+
+      // Diagonal 1->2
+      ctx.beginPath();
+      ctx.strokeStyle = '#4ade80';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // 2. Stop Loss Rectangle Preview (Extension from entry height forming stop height)
+      const stopTopY = Math.min(y1, y3);
+      const stopHeight = Math.abs(y3 - y1);
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.2)';
+      ctx.fillRect(leftX, stopTopY, boxW, stopHeight);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(leftX, stopTopY, boxW, stopHeight);
+
+      // Diagonal guideline to stop
+      ctx.beginPath();
+      ctx.strokeStyle = '#f87171';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.moveTo(x1, y1);
+      ctx.lineTo(x2, y3);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Entry line
+      ctx.beginPath();
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.5;
+      ctx.moveTo(leftX, y1);
+      ctx.lineTo(rightX, y1);
+      ctx.stroke();
+
+      // Calculation of R:R
+      const targetDelta = Math.abs(p2.price - p1.price);
+      const stopDelta = Math.abs(p3Price - p1.price);
+      const rr = stopDelta > 0 ? (targetDelta / stopDelta) : 0;
+
+      // Banner HUD at cursor
+      const banner = `Step 3: Stop $${p3Price.toFixed(2)} (-${stopDelta.toFixed(2)}) · R:R 1:${rr.toFixed(2)} · Click to finish position`;
+      ctx.font = 'bold 9px "JetBrains Mono", monospace';
+      const bW = ctx.measureText(banner).width + 16;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.95)';
+      ctx.fillRect(x2 + 8, y3 - 20, bW, 20);
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x2 + 8, y3 - 20, bW, 20);
+      ctx.fillStyle = '#f87171';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(banner, x2 + 14, y3 - 10);
     }
 
     // 10.5 Candlestick Bar Statistics (Delta & Volume Rows) below chart
@@ -2202,13 +2603,13 @@ export const StockChart: React.FC<StockChartProps> = ({
             const isStBuy = st.side === 'buy';
             ctx.fillStyle = isStBuy ? '#4ade80' : '#f87171';
             const statusLabel = st.mitigated 
-              ? `🎯 Retested at ${st.mitigatedCandleTimeStr}` 
-              : `⚡ Active ${isStBuy ? 'Support' : 'Resist'} Key Levels`;
-            ctx.fillText(`⚡ ${st.count}x ${isStBuy ? 'BUY' : 'SELL'} STACK: $${st.bottomPrice.toFixed(2)}-$${st.topPrice.toFixed(2)} (${statusLabel})`, cardX + 8, stackY);
+              ? 'TESTED' 
+              : `Active ${isStBuy ? 'Support' : 'Resist'} Key Levels`;
+            ctx.fillText(`${isStBuy ? 'BUY' : 'SELL'} STACK: $${st.bottomPrice.toFixed(2)}-$${st.topPrice.toFixed(2)} (${statusLabel})`, cardX + 8, stackY);
           } else if (reachedMitigatedStacks.length > 0) {
             const st = reachedMitigatedStacks[0];
             ctx.fillStyle = '#38bdf8';
-            ctx.fillText(`🎯 RETEST REACHED: Tested ${st.side.toUpperCase()} Stack ($${st.bottomPrice.toFixed(2)}-$${st.topPrice.toFixed(2)}) from ${st.candleTimeStr}`, cardX + 8, stackY);
+            ctx.fillText(`TESTED: ${st.side.toUpperCase()} Stack ($${st.bottomPrice.toFixed(2)}-$${st.topPrice.toFixed(2)})`, cardX + 8, stackY);
           }
         }
 
@@ -2354,7 +2755,7 @@ export const StockChart: React.FC<StockChartProps> = ({
           setCursorStyle('ns-resize');
           return;
         }
-        if ((nearDrawing.type === 'fibonacci' || nearDrawing.type === 'trendline') && nearDrawing.points.length >= 2) {
+        if ((nearDrawing.type === 'fibonacci' || nearDrawing.type === 'trendline' || nearDrawing.type === 'ruler') && nearDrawing.points.length >= 2) {
           const p1 = nearDrawing.points[0];
           const p2 = nearDrawing.points[1];
           const x1 = timeToX(p1.time);
@@ -2363,6 +2764,54 @@ export const StockChart: React.FC<StockChartProps> = ({
           const y2 = priceToY(p2.price);
           if (Math.hypot(x - x1, y - y1) <= 12 || Math.hypot(x - x2, y - y2) <= 12) {
             setCursorStyle('grab');
+            return;
+          }
+        }
+        if (nearDrawing.type === 'ruler' && nearDrawing.points.length >= 2) {
+          const p2 = nearDrawing.points[1];
+          const x2 = timeToX(p2.time);
+          const y2 = priceToY(p2.price);
+          const badgeW = 160;
+          const badgeH = 34;
+          const badgeX = x2 + badgeW + 8 > plotWidth ? Math.max(8, x2 - badgeW - 8) : x2 + 6;
+          const badgeY = Math.max(8, Math.min(plotHeight - badgeH - 8, y2 - 17));
+          const closeBtnX = badgeX + badgeW - 22;
+          const closeBtnY = badgeY + 7;
+          const closeBtnSize = 18;
+          if (x >= closeBtnX - 3 && x <= closeBtnX + closeBtnSize + 3 && y >= closeBtnY - 3 && y <= closeBtnY + closeBtnSize + 3) {
+            setCursorStyle('pointer');
+            return;
+          }
+        }
+        if (nearDrawing.type === 'position' && nearDrawing.points.length >= 2) {
+          const p1 = nearDrawing.points[0];
+          const p2 = nearDrawing.points[1];
+          const p3 = nearDrawing.points[2] || p1;
+          const x1 = timeToX(p1.time);
+          const y1 = priceToY(p1.price);
+          const x2 = timeToX(p2.time);
+          const y2 = priceToY(p2.price);
+          const y3 = priceToY(p3.price);
+
+          if (
+            Math.hypot(x - x1, y - y1) <= 12 || 
+            Math.hypot(x - x2, y - y2) <= 12 || 
+            (nearDrawing.points.length >= 3 && Math.hypot(x - x2, y - y3) <= 12)
+          ) {
+            setCursorStyle('grab');
+            return;
+          }
+
+          const rightX = Math.max(x1, x2);
+          const badgeW = 168;
+          const badgeH = 52;
+          const badgeX = rightX + badgeW + 8 > plotWidth ? Math.max(8, rightX - badgeW - 8) : rightX + 6;
+          const badgeY = Math.max(8, Math.min(plotHeight - badgeH - 8, y1 - 26));
+          const closeBtnX = badgeX + badgeW - 22;
+          const closeBtnY = badgeY + 7;
+          const closeBtnSize = 18;
+          if (x >= closeBtnX - 3 && x <= closeBtnX + closeBtnSize + 3 && y >= closeBtnY - 3 && y <= closeBtnY + closeBtnSize + 3) {
+            setCursorStyle('pointer');
             return;
           }
         }
@@ -2418,6 +2867,58 @@ export const StockChart: React.FC<StockChartProps> = ({
       return;
     }
 
+    // 0. Check direct click on any Ruler's or Position's ✕ close button
+    if (x < plotWidth && y < plotHeight) {
+      for (const d of drawings) {
+        if (d.type === 'ruler' && d.points.length >= 2) {
+          const p2 = d.points[1];
+          const x2 = timeToX(p2.time);
+          const y2 = priceToY(p2.price);
+          const badgeW = 160;
+          const badgeH = 34;
+          const badgeX = x2 + badgeW + 8 > plotWidth ? Math.max(8, x2 - badgeW - 8) : x2 + 6;
+          const badgeY = Math.max(8, Math.min(plotHeight - badgeH - 8, y2 - 17));
+          const closeBtnX = badgeX + badgeW - 22;
+          const closeBtnY = badgeY + 7;
+          const closeBtnSize = 18;
+
+          if (x >= closeBtnX - 4 && x <= closeBtnX + closeBtnSize + 4 && y >= closeBtnY - 4 && y <= closeBtnY + closeBtnSize + 4) {
+            if (onDeleteDrawing) {
+              onDeleteDrawing(d.id);
+            }
+            setSelectedDrawingId(null);
+            setHoveredDrawingId(null);
+            soundManager.playSelect();
+            return;
+          }
+        } else if (d.type === 'position' && d.points.length >= 2) {
+          const p1 = d.points[0];
+          const p2 = d.points[1];
+          const x1 = timeToX(p1.time);
+          const y1 = priceToY(p1.price);
+          const x2 = timeToX(p2.time);
+          const rightX = Math.max(x1, x2);
+          const badgeW = 168;
+          const badgeH = 52;
+          const badgeX = rightX + badgeW + 8 > plotWidth ? Math.max(8, rightX - badgeW - 8) : rightX + 6;
+          const badgeY = Math.max(8, Math.min(plotHeight - badgeH - 8, y1 - 26));
+          const closeBtnX = badgeX + badgeW - 22;
+          const closeBtnY = badgeY + 7;
+          const closeBtnSize = 18;
+
+          if (x >= closeBtnX - 4 && x <= closeBtnX + closeBtnSize + 4 && y >= closeBtnY - 4 && y <= closeBtnY + closeBtnSize + 4) {
+            if (onDeleteDrawing) {
+              onDeleteDrawing(d.id);
+            }
+            setSelectedDrawingId(null);
+            setHoveredDrawingId(null);
+            soundManager.playSelect();
+            return;
+          }
+        }
+      }
+    }
+
     // Check click on an EXISTING drawing first!
     if (x < plotWidth && y < plotHeight) {
       const nearDrawing = findDrawingNearPos(x, y, 8);
@@ -2429,7 +2930,7 @@ export const StockChart: React.FC<StockChartProps> = ({
           setDragMode('drag-drawing');
           setDragStartPos({ x: e.clientX, y: e.clientY });
           setCursorStyle('ns-resize');
-        } else if ((nearDrawing.type === 'fibonacci' || nearDrawing.type === 'trendline') && nearDrawing.points.length >= 2) {
+        } else if ((nearDrawing.type === 'fibonacci' || nearDrawing.type === 'trendline' || nearDrawing.type === 'ruler') && nearDrawing.points.length >= 2) {
           const p1 = nearDrawing.points[0];
           const p2 = nearDrawing.points[1];
           const x1 = timeToX(p1.time);
@@ -2448,6 +2949,39 @@ export const StockChart: React.FC<StockChartProps> = ({
           } else if (dist2 <= 14) {
             setDraggingDrawingId(nearDrawing.id);
             setDraggingPointIndex(1);
+            setDragMode('drag-drawing');
+            setDragStartPos({ x: e.clientX, y: e.clientY });
+            setCursorStyle('grabbing');
+          }
+        } else if (nearDrawing.type === 'position' && nearDrawing.points.length >= 2) {
+          const p1 = nearDrawing.points[0];
+          const p2 = nearDrawing.points[1];
+          const p3 = nearDrawing.points[2] || p1;
+          const x1 = timeToX(p1.time);
+          const y1 = priceToY(p1.price);
+          const x2 = timeToX(p2.time);
+          const y2 = priceToY(p2.price);
+          const y3 = priceToY(p3.price);
+
+          const dist1 = Math.hypot(x - x1, y - y1);
+          const dist2 = Math.hypot(x - x2, y - y2);
+          const dist3 = nearDrawing.points.length >= 3 ? Math.hypot(x - x2, y - y3) : 999;
+
+          if (dist1 <= 14) {
+            setDraggingDrawingId(nearDrawing.id);
+            setDraggingPointIndex(0);
+            setDragMode('drag-drawing');
+            setDragStartPos({ x: e.clientX, y: e.clientY });
+            setCursorStyle('grabbing');
+          } else if (dist2 <= 14) {
+            setDraggingDrawingId(nearDrawing.id);
+            setDraggingPointIndex(1);
+            setDragMode('drag-drawing');
+            setDragStartPos({ x: e.clientX, y: e.clientY });
+            setCursorStyle('grabbing');
+          } else if (dist3 <= 14) {
+            setDraggingDrawingId(nearDrawing.id);
+            setDraggingPointIndex(2);
             setDragMode('drag-drawing');
             setDragStartPos({ x: e.clientX, y: e.clientY });
             setCursorStyle('grabbing');
@@ -2498,7 +3032,7 @@ export const StockChart: React.FC<StockChartProps> = ({
       setSelectedDrawingId(null);
     }
 
-    // Other drawings in progress (trendline, fibonacci, ruler, brush)
+    // Other drawings in progress (trendline, fibonacci, ruler, position, brush)
     if (activeTool && activeTool !== 'crosshair' && activeTool !== 'pan' && activeTool !== 'select') {
       const candleWidth = plotWidth / (visibleCandles.length || 1);
       const candleIdx = Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(x / candleWidth)));
@@ -2515,16 +3049,21 @@ export const StockChart: React.FC<StockChartProps> = ({
       const newPoint = { x, y, price: Math.round(targetPrice * 10000) / 10000, time: pointTime };
 
       const nextPoints = [...currentDrawingPoints, newPoint];
-      if (nextPoints.length === 2) {
+      const requiredPoints = activeTool === 'position' ? 3 : 2;
+      if (nextPoints.length === requiredPoints) {
+        const newDrawingId = `pos_${Date.now()}`;
         onAddDrawing({
-          id: `d_${Date.now()}`,
+          id: newDrawingId,
           type: activeTool,
           points: nextPoints,
-          color: activeTool === 'fibonacci' ? '#38bdf8' : activeTool === 'ruler' ? '#10b981' : '#f59e0b'
+          color: activeTool === 'fibonacci' ? '#38bdf8' : activeTool === 'ruler' ? '#10b981' : activeTool === 'position' ? '#10b981' : '#f59e0b'
         });
+        setSelectedDrawingId(newDrawingId);
         setCurrentDrawingPoints([]);
+        soundManager.playSelect();
       } else {
         setCurrentDrawingPoints(nextPoints);
+        soundManager.playSelect();
       }
       return;
     }
@@ -2535,20 +3074,6 @@ export const StockChart: React.FC<StockChartProps> = ({
     setStartPanOffset(panOffset);
     setStartVerticalPan(verticalPanOffset);
     setCursorStyle('grabbing');
-  };
-
-  // Direct stretch / contract button handlers
-  const handleStretchPrice = () => {
-    setPriceScaleFactor(prev => Math.max(0.04, prev * 0.78));
-  };
-  const handleContractPrice = () => {
-    setPriceScaleFactor(prev => Math.min(15.0, prev * 1.25));
-  };
-  const handleStretchTime = () => {
-    onZoomChange(Math.min(35.0, zoomLevel * 1.25));
-  };
-  const handleContractTime = () => {
-    onZoomChange(Math.max(0.18, zoomLevel * 0.8));
   };
 
   // Window-level mouse move & mouse up listeners for smooth axis dragging and drawing dragging
@@ -2606,14 +3131,14 @@ export const StockChart: React.FC<StockChartProps> = ({
                 y: priceToY(roundedPrice, rect.height)
               }]
             });
-          } else if ((currentDrawing.type === 'fibonacci' || currentDrawing.type === 'trendline') && currentDrawing.points.length >= 2) {
+          } else if ((currentDrawing.type === 'fibonacci' || currentDrawing.type === 'trendline' || currentDrawing.type === 'ruler' || currentDrawing.type === 'position') && currentDrawing.points.length >= 2) {
             const updatedPoints = [...currentDrawing.points];
             const ptIdx = draggingPointIndex >= 0 && draggingPointIndex < updatedPoints.length ? draggingPointIndex : 0;
             const newTime = targetCandle ? targetCandle.time : updatedPoints[ptIdx].time;
             updatedPoints[ptIdx] = {
               ...updatedPoints[ptIdx],
               price: roundedPrice,
-              time: newTime,
+              time: currentDrawing.type === 'position' && ptIdx === 2 ? updatedPoints[1].time : newTime,
               x,
               y: priceToY(roundedPrice, rect.height)
             };
@@ -2882,6 +3407,20 @@ export const StockChart: React.FC<StockChartProps> = ({
     return drawings.find(d => d.id === targetId && d.type === 'fibonacci') || null;
   }, [drawings, selectedDrawingId, hoveredDrawingId]);
 
+  // Selected or hovered ruler for quick action pill
+  const activeRulerDrawing = useMemo(() => {
+    const targetId = selectedDrawingId || hoveredDrawingId;
+    if (!targetId) return null;
+    return drawings.find(d => d.id === targetId && d.type === 'ruler') || null;
+  }, [drawings, selectedDrawingId, hoveredDrawingId]);
+
+  // Selected or hovered position for quick action pill
+  const activePositionDrawing = useMemo(() => {
+    const targetId = selectedDrawingId || hoveredDrawingId;
+    if (!targetId) return null;
+    return drawings.find(d => d.id === targetId && d.type === 'position') || null;
+  }, [drawings, selectedDrawingId, hoveredDrawingId]);
+
   return (
     <div ref={containerRef} className="relative w-full h-full min-h-[300px] overflow-hidden bg-[#0a0e16] select-none">
       <canvas
@@ -2992,99 +3531,120 @@ export const StockChart: React.FC<StockChartProps> = ({
         </div>
       )}
 
-      {/* Floating Scale & Axis Stretch/Contract Dock */}
-      <div className={`absolute ${showBarStats ? 'bottom-[66px]' : 'bottom-9'} right-20 flex items-center bg-[#101726]/90 border border-[#223147] rounded-md backdrop-blur-xs shadow-xl divide-x divide-[#1e2b3e] text-xs z-20 overflow-hidden`}>
-        {/* Price Axis Stretch / Contract Buttons */}
-        <div className="flex items-center px-2 py-1 gap-1 text-slate-300">
-          <span className="text-[10px] font-mono text-slate-400 font-bold" title="Stretch / Contract Price Axis">
-            ↕ Price {Math.round(100 / priceScaleFactor)}%:
-          </span>
-          <button
-            onClick={handleStretchPrice}
-            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-sky-600 hover:text-white text-sky-400 font-bold text-xs transition-colors"
-            title="Stretch Price Scale (Taller Candles / Zoom Price In)"
-          >
-            +
-          </button>
-          <button
-            onClick={handleContractPrice}
-            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-[#25354e] text-slate-300 hover:text-white font-bold text-xs transition-colors"
-            title="Contract Price Scale (Shorter Candles / Zoom Price Out)"
-          >
-            -
-          </button>
-        </div>
-
-        {/* Time Axis Stretch / Contract Buttons */}
-        <div className="flex items-center px-2 py-1 gap-1 text-slate-300">
-          <span className="text-[10px] font-mono text-slate-400 font-bold" title="Stretch / Contract Time Axis">
-            ↔ Time {Math.round(zoomLevel * 100)}%:
-          </span>
-          <button
-            onClick={handleStretchTime}
-            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-sky-600 hover:text-white text-sky-400 font-bold text-xs transition-colors"
-            title="Stretch Time Scale (Wider Candles / Fewer Bars)"
-          >
-            +
-          </button>
-          <button
-            onClick={handleContractTime}
-            className="w-5 h-5 rounded flex items-center justify-center bg-[#182335] hover:bg-[#25354e] text-slate-300 hover:text-white font-bold text-xs transition-colors"
-            title="Contract Time Scale (Narrower Candles / More Bars)"
-          >
-            -
-          </button>
-        </div>
-
-        {/* Footprint Indicator / Zoom to Footprint Button on 1M, 5M, 10M */}
-        {(timeframe === '1M' || timeframe === '5M' || timeframe === '10M') && (
-          <button
-            onClick={() => {
-              if (onZoomToFootprint) {
-                onZoomToFootprint();
-              } else {
-                const targetZoom = Math.max(2.5, (candles.length || 1) / 14);
-                onZoomChange(targetZoom);
-                setPanOffset(0);
-              }
-            }}
-            className={`px-2 py-1 font-mono text-[10px] font-semibold transition-all flex items-center gap-1.5 ${
-              isFootprintZoomActive
-                ? 'text-emerald-400 bg-emerald-950/40 hover:bg-emerald-900/50'
-                : 'text-sky-400 bg-sky-950/40 hover:bg-sky-900/50'
-            }`}
-            title={isFootprintZoomActive ? "Footprint Order Flow Active (Bid x Ask / Imbalances)" : "Zoom In to Footprint Order Flow View"}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${isFootprintZoomActive ? 'bg-emerald-400 animate-pulse' : 'bg-sky-400'}`} />
-            <span>{isFootprintZoomActive ? 'FOOTPRINT ON' : 'ZOOM FOOTPRINT'}</span>
-          </button>
-        )}
-
-        {/* Reset to Auto Button */}
-        <button
-          onClick={handleResetAutoScale}
-          className={`px-2.5 py-1 font-mono text-[10px] font-semibold transition-colors flex items-center gap-1.5 ${
-            isCustomScale ? 'text-sky-400 bg-sky-950/40 hover:bg-sky-900/50' : 'text-slate-500 hover:text-slate-300'
-          }`}
-          title="Reset Price & Time Scale to Auto (Double-click axis also resets)"
+      {/* Floating Interactive Action Pill for Selected / Hovered Ruler */}
+      {activeRulerDrawing && activeRulerDrawing.points.length >= 2 && (
+        <div
+          style={{
+            top: '12px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+          }}
+          className="absolute z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#0d1422]/95 border border-emerald-500/60 shadow-2xl backdrop-blur-md text-xs text-white pointer-events-auto transition-all animate-in fade-in zoom-in-95 duration-100"
         >
-          <span className={`w-1.5 h-1.5 rounded-full ${isCustomScale ? 'bg-sky-400 animate-pulse' : 'bg-slate-600'}`} />
-          <span>AUTO</span>
-        </button>
-      </div>
+          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-semibold pr-1">
+            <Ruler className="w-3.5 h-3.5 text-emerald-400" />
+            <span>
+              {(() => {
+                const p1 = activeRulerDrawing.points[0];
+                const p2 = activeRulerDrawing.points[1];
+                const dPrice = p2.price - p1.price;
+                const dPct = (dPrice / p1.price) * 100;
+                const idx1 = findCandleIndexByTime(candles, p1.time);
+                const idx2 = findCandleIndexByTime(candles, p2.time);
+                const bars = Math.abs(idx2 - idx1);
+                return `Ruler: ${dPrice >= 0 ? '+' : ''}${dPrice.toFixed(4)} (${dPct >= 0 ? '+' : ''}${dPct.toFixed(2)}%) · ${bars} bars`;
+              })()}
+            </span>
+          </div>
+          <div className="h-3.5 w-px bg-slate-700" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onDeleteDrawing) {
+                onDeleteDrawing(activeRulerDrawing.id);
+              }
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+              soundManager.playSelect();
+            }}
+            className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/40 text-red-300 hover:text-red-100 text-[11px] font-medium transition-colors cursor-pointer"
+            title="Delete this measurement (or press Del / Backspace / Right-click ruler)"
+          >
+            <Trash2 className="w-3 h-3" />
+            <span>Remove</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+            }}
+            className="p-0.5 rounded hover:bg-slate-700/60 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Deselect measurement"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
 
-      {/* Floating Drag Direction Mode toggle */}
-      <button
-        onClick={() => setInvertDrag(!invertDrag)}
-        className={`absolute ${showBarStats ? 'bottom-[66px]' : 'bottom-9'} left-3 px-2.5 py-1 rounded bg-[#141d2c]/90 hover:bg-[#1d2a3f] text-slate-300 hover:text-white border border-[#23334a] text-[10px] font-mono backdrop-blur-xs transition-all flex items-center gap-1.5 z-20 shadow-md`}
-        title="Toggle Drag Direction (Inverted: Mouse left → Chart right, Mouse upside → Chart downside)"
-      >
-        <span className="text-slate-400">Drag:</span>
-        <span className={invertDrag ? "text-emerald-400 font-bold" : "text-sky-400 font-bold"}>
-          {invertDrag ? "Inverted (←→ / ↑↓)" : "Standard"}
-        </span>
-        <span className="text-slate-500 text-[10px]">⇄</span>
-      </button>
+      {/* Floating Interactive Action Pill for Selected / Hovered Position Tool */}
+      {activePositionDrawing && activePositionDrawing.points.length >= 2 && (
+        <div
+          style={{
+            top: '12px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+          }}
+          className="absolute z-30 flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#0d1422]/95 border border-emerald-500/60 shadow-2xl backdrop-blur-md text-xs text-white pointer-events-auto transition-all animate-in fade-in zoom-in-95 duration-100"
+        >
+          <div className="flex items-center gap-1.5 text-emerald-400 font-mono text-[11px] font-semibold pr-1">
+            <Target className="w-3.5 h-3.5 text-emerald-400" />
+            <span>
+              {(() => {
+                const p1 = activePositionDrawing.points[0];
+                const p2 = activePositionDrawing.points[1];
+                const p3 = activePositionDrawing.points[2] || p1;
+                const isLong = p2.price >= p1.price;
+                const targetDelta = Math.abs(p2.price - p1.price);
+                const targetPct = p1.price > 0 ? (targetDelta / p1.price) * 100 : 0;
+                const stopDelta = activePositionDrawing.points.length >= 3 ? Math.abs(p3.price - p1.price) : 0;
+                const stopPct = p1.price > 0 ? (stopDelta / p1.price) * 100 : 0;
+                const rr = stopDelta > 0 ? (targetDelta / stopDelta) : 0;
+                return `${isLong ? 'LONG' : 'SHORT'} · R:R 1:${rr.toFixed(2)} · Target: $${p2.price.toFixed(2)} (+${targetPct.toFixed(1)}%) · Stop: $${p3.price.toFixed(2)} (-${stopPct.toFixed(1)}%)`;
+              })()}
+            </span>
+          </div>
+          <div className="h-3.5 w-px bg-slate-700" />
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              if (onDeleteDrawing) {
+                onDeleteDrawing(activePositionDrawing.id);
+              }
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+              soundManager.playSelect();
+            }}
+            className="flex items-center gap-1 px-2.5 py-0.5 rounded bg-red-500/20 hover:bg-red-500/40 text-red-300 hover:text-red-100 text-[11px] font-medium transition-colors cursor-pointer"
+            title="Delete this position tool (or press Del / Backspace / Right-click)"
+          >
+            <Trash2 className="w-3 h-3" />
+            <span>Remove</span>
+          </button>
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedDrawingId(null);
+              setHoveredDrawingId(null);
+            }}
+            className="p-0.5 rounded hover:bg-slate-700/60 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            title="Deselect position"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      )}
+
     </div>
   );
 };

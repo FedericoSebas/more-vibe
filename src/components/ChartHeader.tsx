@@ -564,7 +564,6 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                     footprintFilter.showStackedImbalances !== false ? 'bg-sky-400 animate-pulse' : 'bg-slate-600'
                   }`} />
                   <span className="font-bold">STACKS</span>
-                  <span className="text-[10px] text-sky-400/80 font-bold">{footprintFilter.minStackLevels ?? 3}L</span>
                 </button>
 
                 {showFootprintFilter && (

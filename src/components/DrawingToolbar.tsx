@@ -12,7 +12,8 @@ import {
   RotateCcw, 
   Trash2,
   Magnet,
-  Type
+  Type,
+  Target
 } from 'lucide-react';
 import { DrawingTool } from '../types/stock';
 
@@ -47,6 +48,7 @@ export const DrawingToolbar: React.FC<DrawingToolbarProps> = ({
     { id: 'fibonacci', icon: AlignJustify, title: 'Fibonacci Retracement (50%, 62%, 70.5%, 78.8%, 88.6%, 110%) (F)' },
     { id: 'brush', icon: PenTool, title: 'Freehand Marker Brush (B)' },
     { id: 'ruler', icon: Ruler, title: 'Price & Percentage Measure Ruler (M)' },
+    { id: 'position', icon: Target, title: 'Risk/Reward Position Tool (Target & Stop Loss) (P)' },
   ];
 
   return (

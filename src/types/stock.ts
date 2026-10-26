@@ -20,7 +20,7 @@ export interface CustomDateRange {
 
 export type ChartType = 'candles' | 'hollow' | 'line' | 'area';
 
-export type DrawingTool = 'crosshair' | 'pan' | 'trendline' | 'horizontal' | 'fibonacci' | 'brush' | 'ruler' | 'select' | null;
+export type DrawingTool = 'crosshair' | 'pan' | 'trendline' | 'horizontal' | 'fibonacci' | 'brush' | 'ruler' | 'position' | 'select' | null;
 
 export type MarketSession = 'pre' | 'regular' | 'post' | 'overnight';
 
@@ -197,7 +197,7 @@ export interface StockQuote {
 
 export interface DrawnObject {
   id: string;
-  type: 'trendline' | 'horizontal' | 'fibonacci' | 'brush' | 'ruler';
+  type: 'trendline' | 'horizontal' | 'fibonacci' | 'brush' | 'ruler' | 'position';
   points: { x: number; y: number; price: number; time: number }[];
   color: string;
 }
