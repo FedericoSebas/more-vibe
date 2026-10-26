@@ -482,6 +482,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                 { key: 'sma20', label: 'SMA 20', color: '#3b82f6' },
                 { key: 'sma200', label: 'SMA 200', color: '#a855f7' },
                 { key: 'vwap', label: 'VWAP', color: '#e2e8f0' },
+                { key: 'stackedImbalances', label: 'Stacked Imbalances (Key Levels)', color: '#38bdf8' },
                 { key: 'volumeProfile', label: 'Volume Profile (VP)', color: '#10b981' },
                 { key: 'macd', label: 'MACD Bicolor (12, 26, 9)', color: '#22c55e' },
                 { key: 'barStats', label: 'Delta & Volume Rows', color: '#60a5fa' },
@@ -496,7 +497,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                   </div>
                   <input
                     type="checkbox"
-                    checked={indicators[ind.key as keyof IndicatorVisibility]}
+                    checked={!!indicators[ind.key as keyof IndicatorVisibility]}
                     onChange={() => onToggleIndicator(ind.key as keyof IndicatorVisibility)}
                     className="accent-sky-500 rounded cursor-pointer"
                   />
@@ -543,6 +544,27 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                   <span className={`w-1.5 h-1.5 rounded-full ${
                     footprintFilter.highlightImbalances ? 'bg-amber-400 animate-pulse' : 'bg-slate-600'
                   }`} />
+                </button>
+
+                {/* Quick Stacked Imbalances Toggle Chip */}
+                <button
+                  onClick={() => {
+                    const nextVal = !(footprintFilter.showStackedImbalances !== false);
+                    onUpdateFootprintFilter({ showStackedImbalances: nextVal });
+                    soundManager.playSelect();
+                  }}
+                  className={`hidden md:flex items-center gap-1 px-2 py-1 rounded text-[11px] font-mono transition-all border ${
+                    footprintFilter.showStackedImbalances !== false
+                      ? 'bg-sky-950/40 hover:bg-sky-900/50 text-sky-300 border-sky-500/50 shadow-xs shadow-sky-500/10'
+                      : 'bg-[#171f2c] hover:bg-[#1f2a3c] text-slate-400 border-[#263246]'
+                  }`}
+                  title="Footprint Stacked Imbalances: Detects 3+ consecutive imbalance levels and reflects key level rays until tested by subsequent candles"
+                >
+                  <span className={`w-1.5 h-1.5 rounded-full ${
+                    footprintFilter.showStackedImbalances !== false ? 'bg-sky-400 animate-pulse' : 'bg-slate-600'
+                  }`} />
+                  <span className="font-bold">STACKS</span>
+                  <span className="text-[10px] text-sky-400/80 font-bold">{footprintFilter.minStackLevels ?? 3}L</span>
                 </button>
 
                 {showFootprintFilter && (
@@ -670,24 +692,96 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                       </div>
                     </div>
 
+                    {/* Stacked Imbalances Indicator Controls */}
+                    <div className="pt-2 border-t border-[#1e293b] space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[10px] font-bold uppercase tracking-wider text-sky-400 flex items-center gap-1">
+                          <span>Stacked Imbalances Indicator</span>
+                        </div>
+                        <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                          {footprintFilter.minStackLevels ?? 3}+ Levels
+                        </span>
+                      </div>
+
+                      {/* Enable Stacked Imbalances toggle */}
+                      <label className="flex items-center justify-between p-1.5 rounded bg-[#171f2c] border border-[#232f42] cursor-pointer hover:bg-[#1c2637] transition-colors">
+                        <div>
+                          <div className="text-[11px] font-semibold text-white">Detect Stack Imbalances</div>
+                          <div className="text-[9px] text-slate-400 leading-tight">
+                            Flags 3+ consecutive buy or sell imbalances in a candle
+                          </div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={footprintFilter.showStackedImbalances !== false}
+                          onChange={(e) => onUpdateFootprintFilter({ showStackedImbalances: e.target.checked })}
+                          className="accent-sky-500 rounded cursor-pointer w-3.5 h-3.5"
+                        />
+                      </label>
+
+                      {/* Reflect Key Levels toggle */}
+                      <label className="flex items-center justify-between p-1.5 rounded bg-[#171f2c] border border-[#232f42] cursor-pointer hover:bg-[#1c2637] transition-colors">
+                        <div>
+                          <div className="text-[11px] font-semibold text-sky-300">Reflect to Next Reaching Candle</div>
+                          <div className="text-[9px] text-slate-400 leading-tight">
+                            Projects key level rays until tested by subsequent candle
+                          </div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={footprintFilter.reflectToNextCandle !== false}
+                          onChange={(e) => onUpdateFootprintFilter({ reflectToNextCandle: e.target.checked })}
+                          className="accent-sky-500 rounded cursor-pointer w-3.5 h-3.5"
+                        />
+                      </label>
+
+                      {/* Min Stack Levels Depth selector */}
+                      <div>
+                        <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400 mb-1">
+                          Minimum Consecutive Levels:
+                        </div>
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {[
+                            { label: '3 Levels (Standard)', val: 3 },
+                            { label: '4 Levels (Institutional)', val: 4 },
+                          ].map((stackOpt) => (
+                            <button
+                              key={stackOpt.val}
+                              onClick={() => {
+                                onUpdateFootprintFilter({ minStackLevels: stackOpt.val });
+                                soundManager.playSelect();
+                              }}
+                              className={`p-1 rounded text-center border text-[10px] font-mono transition-all ${
+                                (footprintFilter.minStackLevels ?? 3) === stackOpt.val
+                                  ? 'bg-sky-500/20 border-sky-500/60 text-sky-300 font-bold'
+                                  : 'bg-[#18202e] hover:bg-[#202b3d] border-[#253245] text-slate-400'
+                              }`}
+                            >
+                              {stackOpt.label}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+
                     {/* Visual Color Legend */}
                     <div className="pt-2 border-t border-[#1e293b] space-y-1">
                       <div className="text-[9px] font-bold uppercase text-slate-500 tracking-wider">
-                        Order Number Highlights Legend:
+                        Order Flow Highlights & Stacks:
                       </div>
                       <div className="flex items-center justify-between text-[10px] font-mono px-2 py-1 rounded bg-[#161f2d] border border-[#232f42]">
                         <span className="flex items-center gap-1.5 text-emerald-400 font-bold">
                           <span className="w-2.5 h-2.5 rounded-[2px] bg-emerald-600 border border-emerald-400" />
-                          Ask Order Number
+                          Buy Stack (Bull Support)
                         </span>
-                        <span className="text-slate-300">≥ {footprintFilter.imbalanceRatio}× Buyers</span>
+                        <span className="text-slate-300">≥ {footprintFilter.minStackLevels ?? 3} Ask Imbalances</span>
                       </div>
                       <div className="flex items-center justify-between text-[10px] font-mono px-2 py-1 rounded bg-[#161f2d] border border-[#232f42]">
                         <span className="flex items-center gap-1.5 text-rose-400 font-bold">
                           <span className="w-2.5 h-2.5 rounded-[2px] bg-rose-600 border border-rose-400" />
-                          Bid Order Number
+                          Sell Stack (Bear Resistance)
                         </span>
-                        <span className="text-slate-300">≥ {footprintFilter.imbalanceRatio}× Sellers</span>
+                        <span className="text-slate-300">≥ {footprintFilter.minStackLevels ?? 3} Bid Imbalances</span>
                       </div>
                     </div>
 

@@ -15,7 +15,8 @@ import {
   Timeframe,
   CandleFootprint,
   Level2Book,
-  FootprintFilterConfig
+  FootprintFilterConfig,
+  StackedImbalance
 } from '../types/stock';
 import { 
   calculateEMA, 
@@ -26,7 +27,9 @@ import {
 } from '../utils/stockData';
 import { 
   generateCandleFootprint, 
-  formatOrderFlowVolume 
+  formatOrderFlowVolume,
+  detectAndProjectStackedImbalances,
+  extractCandleStackedImbalances 
 } from '../utils/orderFlow';
 import { soundManager } from '../utils/sound';
 
@@ -140,9 +143,51 @@ export const StockChart: React.FC<StockChartProps> = ({
       imbalanceRatio: 4.0,
       imbalanceMode: 'level' as const,
       minVolumeThreshold: 10,
-      showRatioBadge: true
+      showRatioBadge: true,
+      showStackedImbalances: true,
+      minStackLevels: 3,
+      reflectToNextCandle: true,
+      showTestedLevels: true
     };
   }, [footprintFilter]);
+
+  const isStackedEnabled = (indicators.stackedImbalances !== false) && (activeFpFilter.showStackedImbalances !== false);
+
+  const allStackedImbalances = useMemo(() => {
+    if (!isStackedEnabled || candles.length === 0) return [];
+
+    const getFp = (idx: number) => {
+      const c = candles[idx];
+      if (!c) return undefined;
+      const cacheKey = `${c.time}_${c.volume}_${c.close}_${c.high}_${c.low}_${activeFpFilter.imbalanceRatio}_${activeFpFilter.imbalanceMode}_${activeFpFilter.minVolumeThreshold}`;
+      let fp = footprintCache.current.get(cacheKey);
+      if (!fp) {
+        fp = generateCandleFootprint(
+          c,
+          level2Book,
+          activeFpFilter.imbalanceRatio,
+          activeFpFilter.imbalanceMode,
+          activeFpFilter.minVolumeThreshold
+        );
+        footprintCache.current.set(cacheKey, fp);
+      }
+      return fp;
+    };
+
+    return detectAndProjectStackedImbalances(
+      candles,
+      getFp,
+      activeFpFilter.minStackLevels ?? 3
+    );
+  }, [
+    candles,
+    level2Book,
+    activeFpFilter.imbalanceRatio,
+    activeFpFilter.imbalanceMode,
+    activeFpFilter.minVolumeThreshold,
+    activeFpFilter.minStackLevels,
+    isStackedEnabled
+  ]);
 
   // Time & Price pan offsets (default 0 so chart starts at the beginning 04:00 AM)
   const [internalPanOffset, setInternalPanOffset] = useState<number>(0);
@@ -969,6 +1014,60 @@ export const StockChart: React.FC<StockChartProps> = ({
           ctx.lineWidth = 1.5;
           ctx.strokeRect(leftX, candleTop, fpWidth, candleHeight);
 
+          // Render Stacked Imbalance Brackets on Footprint Candle
+          if (isStackedEnabled) {
+            const candleStacks = allStackedImbalances.filter(s => s.candleIndex === startIndex + i);
+            for (const st of candleStacks) {
+              const stTopY = priceToY(st.topPrice);
+              const stBottomY = priceToY(st.bottomPrice);
+              const stH = Math.max(8, stBottomY - stTopY);
+              const isStBuy = st.side === 'buy';
+
+              // Glowing bracket on the imbalanced side
+              ctx.strokeStyle = isStBuy ? '#4ade80' : '#f87171';
+              ctx.lineWidth = 2;
+              ctx.beginPath();
+              if (isStBuy) {
+                // Bracket on Ask (right) side
+                ctx.moveTo(rightX, stTopY);
+                ctx.lineTo(rightX + 4, stTopY);
+                ctx.lineTo(rightX + 4, stBottomY);
+                ctx.lineTo(rightX, stBottomY);
+              } else {
+                // Bracket on Bid (left) side
+                ctx.moveTo(leftX, stTopY);
+                ctx.lineTo(leftX - 4, stTopY);
+                ctx.lineTo(leftX - 4, stBottomY);
+                ctx.lineTo(leftX, stBottomY);
+              }
+              ctx.stroke();
+
+              // Highlight outline around the stack levels
+              ctx.fillStyle = isStBuy ? 'rgba(34, 197, 94, 0.14)' : 'rgba(239, 68, 68, 0.14)';
+              ctx.fillRect(leftX, stTopY, fpWidth, stH);
+
+              // Bracket Stack Badge
+              if (candleWidth >= 50) {
+                const badgeText = `⚡ ${st.count}x ${isStBuy ? 'BUY' : 'SELL'}`;
+                ctx.font = 'bold 7.5px "JetBrains Mono", monospace';
+                const bW = ctx.measureText(badgeText).width + 6;
+                const bX = isStBuy ? rightX + 6 : leftX - bW - 6;
+                const bY = stTopY + stH / 2 - 6;
+
+                ctx.fillStyle = isStBuy ? '#15803d' : '#b91c1c';
+                ctx.fillRect(bX, bY, bW, 12);
+                ctx.strokeStyle = isStBuy ? '#4ade80' : '#f87171';
+                ctx.lineWidth = 0.8;
+                ctx.strokeRect(bX, bY, bW, 12);
+
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#ffffff';
+                ctx.fillText(badgeText, bX + bW / 2, bY + 6);
+              }
+            }
+          }
+
           // Delta Summary Badge below the candle
           const isPositiveDelta = fp.totalDelta >= 0;
           const deltaText = `Δ ${isPositiveDelta ? '+' : ''}${formatOrderFlowVolume(fp.totalDelta)}`;
@@ -1004,6 +1103,190 @@ export const StockChart: React.FC<StockChartProps> = ({
             ctx.strokeRect(x - bodyWidth / 2, candleTop, bodyWidth, candleHeight);
           } else {
             ctx.fillRect(x - bodyWidth / 2, candleTop, bodyWidth, candleHeight);
+          }
+        }
+      }
+    }
+
+    // 7.5. Draw Footprint Stack Imbalances Key Levels & Reflections to the Next Reaching Candle
+    if (isStackedEnabled && allStackedImbalances.length > 0) {
+      for (const stack of allStackedImbalances) {
+        // Filter out mitigated if user explicitly unchecked showTestedLevels
+        if (activeFpFilter.showTestedLevels === false && stack.mitigated) {
+          continue;
+        }
+
+        const originRelIdx = stack.candleIndex - startIndex;
+        const reachedRelIdx = stack.mitigated && stack.mitigatedCandleIndex !== null 
+          ? stack.mitigatedCandleIndex - startIndex 
+          : null;
+
+        const originX = indexToX(originRelIdx);
+        let reachedX: number;
+        if (stack.mitigated && reachedRelIdx !== null) {
+          // Reaches exactly the next candle that reached those key levels
+          reachedX = indexToX(reachedRelIdx);
+        } else {
+          // Untested / Active: projects all the way to current live right edge
+          reachedX = plotWidth;
+        }
+
+        // Horizontal Viewport culling
+        if (reachedX < 0 || originX > plotWidth) continue;
+
+        const startX = Math.max(0, originX);
+        const endX = Math.min(plotWidth, reachedX);
+        if (endX <= startX) continue;
+
+        const yTop = priceToY(stack.topPrice);
+        const yBottom = priceToY(stack.bottomPrice);
+        const zoneH = Math.max(3, yBottom - yTop);
+        const yPoc = priceToY(stack.pocPrice);
+
+        // Vertical Viewport culling
+        if (yBottom < 0 || yTop > pricePlotHeight) continue;
+
+        const isBuy = stack.side === 'buy';
+        const isMitigated = stack.mitigated && stack.mitigatedCandleIndex !== null;
+
+        // 1. Shaded Key Level Reflection Zone
+        if (isBuy) {
+          ctx.fillStyle = isMitigated 
+            ? 'rgba(34, 197, 94, 0.09)' 
+            : 'rgba(34, 197, 94, 0.20)';
+        } else {
+          ctx.fillStyle = isMitigated 
+            ? 'rgba(239, 68, 68, 0.09)' 
+            : 'rgba(239, 68, 68, 0.20)';
+        }
+        ctx.fillRect(startX, yTop, endX - startX, zoneH);
+
+        // 2. Upper and Lower Boundary Rays (Key Levels)
+        ctx.lineWidth = isMitigated ? 1.2 : 1.6;
+        ctx.strokeStyle = isBuy 
+          ? (isMitigated ? 'rgba(74, 222, 128, 0.75)' : '#22c55e') 
+          : (isMitigated ? 'rgba(248, 113, 113, 0.75)' : '#ef4444');
+
+        if (isMitigated) {
+          ctx.setLineDash([5, 3]);
+        } else {
+          ctx.setLineDash([]);
+        }
+
+        // Top ray
+        ctx.beginPath();
+        ctx.moveTo(startX, yTop);
+        ctx.lineTo(endX, yTop);
+        ctx.stroke();
+
+        // Bottom ray
+        ctx.beginPath();
+        ctx.moveTo(startX, yBottom);
+        ctx.lineTo(endX, yBottom);
+        ctx.stroke();
+
+        // Midline / Stack POC Ray (Fine dotted)
+        ctx.beginPath();
+        ctx.setLineDash([2, 3]);
+        ctx.strokeStyle = isBuy ? 'rgba(134, 239, 172, 0.55)' : 'rgba(252, 165, 165, 0.55)';
+        ctx.lineWidth = 1;
+        ctx.moveTo(startX, yPoc);
+        ctx.lineTo(endX, yPoc);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // 3. Label at Origin Candle
+        if (originX >= 0 && originX <= plotWidth - 45) {
+          const originLabel = `⚡ ${stack.count}x ${isBuy ? 'BUY' : 'SELL'} STACK`;
+          ctx.font = 'bold 8px "JetBrains Mono", monospace';
+          const labelW = ctx.measureText(originLabel).width + 8;
+          const labelY = Math.max(10, yTop - 12);
+          
+          ctx.fillStyle = isBuy ? 'rgba(21, 128, 61, 0.90)' : 'rgba(185, 28, 28, 0.90)';
+          ctx.fillRect(originX, labelY, labelW, 11);
+          ctx.strokeStyle = isBuy ? '#4ade80' : '#f87171';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(originX, labelY, labelW, 11);
+
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(originLabel, originX + 4, labelY + 5.5);
+        }
+
+        // 4. Terminus on the NEXT Candle that reaches those key levels
+        if (isMitigated && reachedRelIdx !== null && reachedX >= 0 && reachedX <= plotWidth) {
+          // Vertical stop tick marking candle reach
+          ctx.beginPath();
+          ctx.strokeStyle = isBuy ? '#4ade80' : '#f87171';
+          ctx.lineWidth = 2;
+          ctx.moveTo(reachedX, yTop - 4);
+          ctx.lineTo(reachedX, yBottom + 4);
+          ctx.stroke();
+
+          // Retest Target Touch node on the reaching candle
+          const yTouch = priceToY(stack.mitigatedPrice ?? stack.pocPrice);
+          ctx.beginPath();
+          ctx.arc(reachedX, yTouch, 4, 0, Math.PI * 2);
+          ctx.fillStyle = isBuy ? '#22c55e' : '#ef4444';
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+
+          // Retested / Mitigated label badge on the reaching candle
+          ctx.font = 'bold 8px "JetBrains Mono", monospace';
+          const testText = `🎯 TESTED ${stack.mitigatedCandleTimeStr ?? ''}`;
+          const badgeW = ctx.measureText(testText).width + 8;
+          let badgeX = reachedX + 6;
+          if (badgeX + badgeW > plotWidth) {
+            badgeX = reachedX - badgeW - 6;
+          }
+          const badgeY = Math.max(10, Math.min(pricePlotHeight - 14, yTouch - 6));
+
+          ctx.fillStyle = 'rgba(12, 19, 34, 0.94)';
+          ctx.fillRect(badgeX, badgeY, badgeW, 12);
+          ctx.strokeStyle = isBuy ? 'rgba(74, 222, 128, 0.85)' : 'rgba(248, 113, 113, 0.85)';
+          ctx.lineWidth = 0.8;
+          ctx.strokeRect(badgeX, badgeY, badgeW, 12);
+
+          ctx.textAlign = 'left';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = isBuy ? '#86efac' : '#fca5a5';
+          ctx.fillText(testText, badgeX + 4, badgeY + 6);
+        } else if (!isMitigated) {
+          // 5. Active Untested Key Level: Indicator tag at the live right edge
+          const activeText = `⚡ ACTIVE ${isBuy ? 'BUY' : 'SELL'} STACK`;
+          ctx.font = 'bold 8px "JetBrains Mono", monospace';
+          const textW = ctx.measureText(activeText).width;
+          const badgeW = textW + 10;
+          const badgeX = plotWidth - badgeW - 4;
+          const badgeY = yPoc - 6;
+
+          ctx.fillStyle = isBuy ? '#14532d' : '#7f1d1d';
+          ctx.fillRect(badgeX, badgeY, badgeW, 12);
+          ctx.strokeStyle = isBuy ? '#4ade80' : '#f87171';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(badgeX, badgeY, badgeW, 12);
+
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(activeText, badgeX + badgeW / 2, badgeY + 6);
+
+          // Right Price Axis Tag for Active Stack Key Level
+          if (yPoc >= 0 && yPoc <= pricePlotHeight) {
+            ctx.fillStyle = isBuy ? '#15803d' : '#b91c1c';
+            ctx.fillRect(plotWidth, yPoc - 8, rightAxisWidth, 16);
+            ctx.strokeStyle = isBuy ? '#4ade80' : '#f87171';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(plotWidth, yPoc - 8, rightAxisWidth, 16);
+
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 8.5px "JetBrains Mono", monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(`${isBuy ? 'BUY' : 'SELL'} ${stack.pocPrice.toFixed(2)}`, plotWidth + rightAxisWidth / 2, yPoc);
           }
         }
       }
@@ -1814,8 +2097,14 @@ export const StockChart: React.FC<StockChartProps> = ({
         const buyImbCount = activeFp ? activeFp.levels.filter(l => l.isBuyImbalance).length : 0;
         const sellImbCount = activeFp ? activeFp.levels.filter(l => l.isSellImbalance).length : 0;
 
-        const cardW = isFpActive ? 286 : 236;
-        const cardH = isFpActive ? (hoveredLevelInfo || buyImbCount > 0 || sellImbCount > 0 ? 80 : 64) : 46;
+        const originatingStacks = isStackedEnabled ? allStackedImbalances.filter(s => s.candleIndex === activeCandleGlobalIdx) : [];
+        const reachedMitigatedStacks = isStackedEnabled ? allStackedImbalances.filter(s => s.mitigated && s.mitigatedCandleIndex === activeCandleGlobalIdx) : [];
+        const hasStackInfo = originatingStacks.length > 0 || reachedMitigatedStacks.length > 0;
+
+        const cardW = isFpActive ? 300 : (hasStackInfo ? 270 : 236);
+        const cardH = isFpActive 
+          ? (hasStackInfo ? 98 : (hoveredLevelInfo || buyImbCount > 0 || sellImbCount > 0 ? 80 : 64)) 
+          : (hasStackInfo ? 64 : 46);
         let cardX = barX - cardW / 2;
         cardX = Math.max(10, Math.min(plotWidth - cardW - 10, cardX));
         
@@ -1880,11 +2169,11 @@ export const StockChart: React.FC<StockChartProps> = ({
           ctx.fillText(`Δ Delta: ${activeFp.totalDelta >= 0 ? '+' : ''}${formatOrderFlowVolume(activeFp.totalDelta)} (${activeFp.deltaPercent > 0 ? '+' : ''}${activeFp.deltaPercent}%)`, cardX + 8, rowY2);
 
           ctx.fillStyle = '#f59e0b';
-          ctx.fillText(`POC: $${activeFp.pocPrice.toFixed(4)}`, cardX + 175, rowY2);
+          ctx.fillText(`POC: $${activeFp.pocPrice.toFixed(4)}`, cardX + 185, rowY2);
 
           // Footprint Order Flow Row 4 (Imbalance info on hovered level or candle summary)
           if (hoveredLevelInfo || buyImbCount > 0 || sellImbCount > 0) {
-            const rowY3 = cardY + 60;
+            const rowY3 = cardY + 58;
             ctx.font = 'bold 9px "JetBrains Mono", monospace';
             if (hoveredLevelInfo) {
               if (hoveredImbSide === 'buy') {
@@ -1901,6 +2190,25 @@ export const StockChart: React.FC<StockChartProps> = ({
               ctx.fillStyle = '#f59e0b';
               ctx.fillText(`⚡ ${activeFpFilter.imbalanceRatio}x Imbalances: ${buyImbCount} Buys · ${sellImbCount} Sells`, cardX + 8, rowY3);
             }
+          }
+        }
+
+        // Row 5: Stacked Imbalances Key Levels indicator readout
+        if (hasStackInfo) {
+          const stackY = isFpActive ? (cardY + 76) : (cardY + 42);
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          if (originatingStacks.length > 0) {
+            const st = originatingStacks[0];
+            const isStBuy = st.side === 'buy';
+            ctx.fillStyle = isStBuy ? '#4ade80' : '#f87171';
+            const statusLabel = st.mitigated 
+              ? `🎯 Retested at ${st.mitigatedCandleTimeStr}` 
+              : `⚡ Active ${isStBuy ? 'Support' : 'Resist'} Key Levels`;
+            ctx.fillText(`⚡ ${st.count}x ${isStBuy ? 'BUY' : 'SELL'} STACK: $${st.bottomPrice.toFixed(2)}-$${st.topPrice.toFixed(2)} (${statusLabel})`, cardX + 8, stackY);
+          } else if (reachedMitigatedStacks.length > 0) {
+            const st = reachedMitigatedStacks[0];
+            ctx.fillStyle = '#38bdf8';
+            ctx.fillText(`🎯 RETEST REACHED: Tested ${st.side.toUpperCase()} Stack ($${st.bottomPrice.toFixed(2)}-$${st.topPrice.toFixed(2)}) from ${st.candleTimeStr}`, cardX + 8, stackY);
           }
         }
 

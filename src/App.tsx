@@ -44,7 +44,7 @@ export default function App() {
   const selectedStockRef = useRef<StockQuote>(selectedStock);
   selectedStockRef.current = selectedStock;
   
-  // Indicators matching the reference image (EMA 9, SMA 20, SMA 200, VWAP, VP 50, MACD)
+  // Indicators matching the reference image (EMA 9, SMA 20, SMA 200, VWAP, VP 50, MACD, Stacked Imbalances)
   const [indicators, setIndicators] = useState<IndicatorVisibility>({
     ema9: true,
     sma20: true,
@@ -52,7 +52,8 @@ export default function App() {
     vwap: true,
     volumeProfile: true,
     macd: true,
-    barStats: true
+    barStats: true,
+    stackedImbalances: true
   });
 
   // Drawing tools
@@ -73,7 +74,11 @@ export default function App() {
     imbalanceRatio: 4.0,
     imbalanceMode: 'level',
     minVolumeThreshold: 10,
-    showRatioBadge: true
+    showRatioBadge: true,
+    showStackedImbalances: true,
+    minStackLevels: 3,
+    reflectToNextCandle: true,
+    showTestedLevels: true
   });
 
   const handleUpdateFootprintFilter = useCallback((updater: Partial<FootprintFilterConfig>) => {

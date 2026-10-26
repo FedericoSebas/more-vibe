@@ -1,4 +1,13 @@
-import { Candle, FootprintLevel, CandleFootprint, Level2Book, Level2Order, OrderFlowTrade, StockQuote } from '../types/stock';
+import { 
+  Candle, 
+  FootprintLevel, 
+  CandleFootprint, 
+  Level2Book, 
+  Level2Order, 
+  OrderFlowTrade, 
+  StockQuote,
+  StackedImbalance 
+} from '../types/stock';
 
 /**
  * Calculates a dynamic tick size for the footprint chart based on price range
@@ -45,7 +54,8 @@ export function calculateDynamicTickSize(low: number, high: number, price: numbe
  * - Market sells hit the bid (Bid Volume)
  * - Market buys lift the ask (Ask Volume)
  * - Volume clusters around the Value Area (POC)
- * - Detects aggressive buying/selling imbalances (e.g. 300% ratio)
+ * - Detects aggressive buying/selling imbalances (e.g. 400% ratio)
+ * - Simulates institutional stacked sweeps (3+ contiguous levels)
  */
 export function generateCandleFootprint(
   candle: Candle,
@@ -78,10 +88,6 @@ export function generateCandleFootprint(
   let minDelta = 0;
   let maxDelta = 0;
 
-  // Distribute total candle volume across levels with realistic auction weighting
-  // using pseudo-random seed based on candle timestamp and ticker
-  const seed = (candle.time % 100000) / 100000;
-  
   // Step 1: Calculate raw weight for each level
   const rawWeights: number[] = [];
   for (let i = 0; i < levelsCount; i++) {
@@ -106,6 +112,24 @@ export function generateCandleFootprint(
   }
   
   const sumWeights = rawWeights.reduce((a, b) => a + b, 0) || 1;
+
+  // Authentic Stacked Imbalance generation:
+  // Determine if this candle features an institutional block sweep (3-4 consecutive price levels)
+  const stackSeed = Math.sin(candle.time * 0.0051 + (candle.volume % 773));
+  const hasStack = levelsCount >= 6 && Math.abs(stackSeed) > 0.28;
+  const stackIsBuy = isUp ? stackSeed > -0.3 : stackSeed > 0.35;
+  const stackLength = Math.min(levelsCount - 2, Math.abs(stackSeed) > 0.6 ? 4 : 3);
+  
+  let stackStartIdx = -1;
+  if (hasStack) {
+    const minBodyIdx = Math.max(1, Math.floor((Math.min(open, close) - minPrice) / tickSize));
+    const maxBodyIdx = Math.min(levelsCount - stackLength - 1, Math.ceil((Math.max(open, close) - minPrice) / tickSize));
+    if (maxBodyIdx >= minBodyIdx) {
+      stackStartIdx = minBodyIdx + Math.floor(Math.abs(stackSeed * 7) % (maxBodyIdx - minBodyIdx + 1));
+    } else {
+      stackStartIdx = Math.max(1, Math.min(levelsCount - stackLength - 1, Math.floor(levelsCount / 2) - 1));
+    }
+  }
   
   // Step 2: Build footprint levels
   for (let i = 0; i < levelsCount; i++) {
@@ -113,9 +137,6 @@ export function generateCandleFootprint(
     const levelVolFraction = rawWeights[i] / sumWeights;
     const levelTotalVol = Math.max(10, Math.round(volume * levelVolFraction));
     
-    // Buy vs Sell aggressiveness split
-    // In an uptrend, ask volume (market buys) dominates higher levels
-    // In a downtrend, bid volume (market sells) dominates lower levels
     let buyRatio: number;
     const pricePosition = (lvlPrice - low) / Math.max(0.01, high - low);
     
@@ -125,25 +146,35 @@ export function generateCandleFootprint(
       buyRatio = 0.52 - 0.28 * (1 - pricePosition);
     }
 
-    // Realistic institutional order flow auction sweeps / absorption:
-    // Create authentic occurrences of >= 4x buyer lifting ask or >= 4x seller hitting bid at key price levels
-    const levelSeed = Math.sin((candle.time * 0.003 + i * 2.718));
-    if (levelSeed > 0.58) {
-      // Aggressive buyer sweep at this level: buyers exceed sellers by 4x to 12x
-      buyRatio = 0.81 + (levelSeed - 0.58) * 0.35; // 0.81 - 0.95 -> 4.2x to 19x Ask/Bid
-    } else if (levelSeed < -0.58) {
-      // Aggressive seller dump at this level: sellers exceed buyers by 4x to 12x
-      buyRatio = 0.19 - (-levelSeed - 0.58) * 0.35; // 0.05 - 0.19 -> 4.2x to 19x Bid/Ask
+    // Check if this level falls into the institutional stacked sweep
+    if (hasStack && i >= stackStartIdx && i < stackStartIdx + stackLength) {
+      if (stackIsBuy) {
+        // Institutional buyer sweep: Ask is >= 4.2x to 15x Bid
+        buyRatio = 0.83 + ((i - stackStartIdx) * 0.02) + (Math.sin(candle.time + i) * 0.04);
+        buyRatio = Math.max(0.82, Math.min(0.96, buyRatio));
+      } else {
+        // Institutional seller dump: Bid is >= 4.2x to 15x Ask
+        buyRatio = 0.17 - ((i - stackStartIdx) * 0.02) - (Math.sin(candle.time + i) * 0.04);
+        buyRatio = Math.max(0.04, Math.min(0.18, buyRatio));
+      }
     } else {
-      buyRatio += (Math.cos((candle.time + i) * 0.05) * 0.10);
+      // General auction sweeps / absorption
+      const levelSeed = Math.sin((candle.time * 0.003 + i * 2.718));
+      if (levelSeed > 0.62) {
+        buyRatio = 0.81 + (levelSeed - 0.62) * 0.35;
+      } else if (levelSeed < -0.62) {
+        buyRatio = 0.19 - (-levelSeed - 0.62) * 0.35;
+      } else {
+        buyRatio += (Math.cos((candle.time + i) * 0.05) * 0.10);
+      }
     }
     
-    // If Level 2 context exists, pull slight skew from real-time book imbalance
+    // Level 2 depth skew
     if (level2Context) {
       buyRatio += level2Context.imbalanceRatio * 0.08;
     }
     
-    buyRatio = Math.max(0.05, Math.min(0.95, buyRatio));
+    buyRatio = Math.max(0.04, Math.min(0.96, buyRatio));
     
     const askVol = Math.round(levelTotalVol * buyRatio);
     const bidVol = Math.max(1, levelTotalVol - askVol);
@@ -180,8 +211,6 @@ export function generateCandleFootprint(
     const curLevel = levels[i];
     
     if (imbalanceMode === 'level') {
-      // At this particular price level (Horizontal Imbalance):
-      // 4 times as many buyers (Ask >= 4x Bid) or sellers (Bid >= 4x Ask)
       const bid = Math.max(1, curLevel.bidVolume);
       const ask = Math.max(1, curLevel.askVolume);
       
@@ -197,8 +226,7 @@ export function generateCandleFootprint(
         curLevel.isSellImbalance = true;
       }
     } else {
-      // Diagonal auction comparison:
-      // Buying imbalance compares Ask at price P to Bid at price P-1
+      // Diagonal auction comparison
       if (i > 0) {
         const prevBid = Math.max(1, levels[i - 1].bidVolume);
         const bRatio = curLevel.askVolume / prevBid;
@@ -208,7 +236,6 @@ export function generateCandleFootprint(
         }
       }
       
-      // Selling imbalance compares Bid at price P to Ask at price P+1
       if (i < levels.length - 1) {
         const nextAsk = Math.max(1, levels[i + 1].askVolume);
         const sRatio = curLevel.bidVolume / nextAsk;
@@ -234,6 +261,160 @@ export function generateCandleFootprint(
     maxDelta,
     tickSize
   };
+}
+
+/**
+ * Creates a normalized StackedImbalance data structure from consecutive levels
+ */
+function createStackedImbalanceObj(
+  candle: Candle,
+  candleIndex: number,
+  levels: FootprintLevel[],
+  side: 'buy' | 'sell',
+  tickSize: number
+): StackedImbalance {
+  const sorted = [...levels].sort((a, b) => a.price - b.price);
+  const minPrice = sorted[0].price;
+  const maxPrice = sorted[sorted.length - 1].price;
+  
+  const totalVolume = sorted.reduce((sum, l) => sum + l.totalVolume, 0);
+  const totalDelta = sorted.reduce((sum, l) => sum + l.delta, 0);
+
+  let highestVol = -1;
+  let pocPrice = sorted[0].price;
+  for (const l of sorted) {
+    if (l.totalVolume > highestVol) {
+      highestVol = l.totalVolume;
+      pocPrice = l.price;
+    }
+  }
+
+  return {
+    id: `stack_${candle.time}_${side}_${minPrice.toFixed(4)}_${maxPrice.toFixed(4)}`,
+    candleIndex,
+    candleTime: candle.time,
+    candleTimeStr: candle.timeStr,
+    side,
+    count: sorted.length,
+    topPrice: Math.round((maxPrice + tickSize * 0.5) * 10000) / 10000,
+    bottomPrice: Math.round((minPrice - tickSize * 0.5) * 10000) / 10000,
+    pocPrice,
+    tickSize,
+    levels: sorted,
+    totalVolume,
+    totalDelta,
+    mitigated: false,
+    mitigatedCandleIndex: null,
+    mitigatedCandleTime: null,
+    mitigatedPrice: null,
+    status: 'active'
+  };
+}
+
+/**
+ * Extracts stacked imbalances within a single candle's footprint
+ */
+export function extractCandleStackedImbalances(
+  candle: Candle,
+  candleIndex: number,
+  fp: CandleFootprint,
+  minStackLevels = 3
+): StackedImbalance[] {
+  const result: StackedImbalance[] = [];
+  const levels = fp.levels;
+  if (!levels || levels.length < minStackLevels) return result;
+
+  // 1. Detect Buy Stacks (consecutive levels with isBuyImbalance)
+  let currentBuyStack: FootprintLevel[] = [];
+  for (let i = 0; i < levels.length; i++) {
+    const lvl = levels[i];
+    if (lvl.isBuyImbalance) {
+      currentBuyStack.push(lvl);
+    } else {
+      if (currentBuyStack.length >= minStackLevels) {
+        result.push(createStackedImbalanceObj(candle, candleIndex, currentBuyStack, 'buy', fp.tickSize));
+      }
+      currentBuyStack = [];
+    }
+  }
+  if (currentBuyStack.length >= minStackLevels) {
+    result.push(createStackedImbalanceObj(candle, candleIndex, currentBuyStack, 'buy', fp.tickSize));
+  }
+
+  // 2. Detect Sell Stacks (consecutive levels with isSellImbalance)
+  let currentSellStack: FootprintLevel[] = [];
+  for (let i = 0; i < levels.length; i++) {
+    const lvl = levels[i];
+    if (lvl.isSellImbalance) {
+      currentSellStack.push(lvl);
+    } else {
+      if (currentSellStack.length >= minStackLevels) {
+        result.push(createStackedImbalanceObj(candle, candleIndex, currentSellStack, 'sell', fp.tickSize));
+      }
+      currentSellStack = [];
+    }
+  }
+  if (currentSellStack.length >= minStackLevels) {
+    result.push(createStackedImbalanceObj(candle, candleIndex, currentSellStack, 'sell', fp.tickSize));
+  }
+
+  return result;
+}
+
+/**
+ * Detects all stacked imbalances across candles and projects / reflects
+ * their key levels forward in time until the NEXT candle that reaches those key levels.
+ * If no subsequent candle reaches them, the stack remains 'active' (untested key support/resistance).
+ */
+export function detectAndProjectStackedImbalances(
+  candles: Candle[],
+  footprintLookup: (index: number) => CandleFootprint | undefined,
+  minStackLevels = 3
+): StackedImbalance[] {
+  const allStacks: StackedImbalance[] = [];
+
+  // Step 1: Detect all stacks across candles
+  for (let i = 0; i < candles.length; i++) {
+    const fp = footprintLookup(i);
+    if (!fp) continue;
+    const candleStacks = extractCandleStackedImbalances(candles[i], i, fp, minStackLevels);
+    allStacks.push(...candleStacks);
+  }
+
+  // Step 2: For each stack, project forward to find the NEXT candle that reaches those key levels
+  for (const stack of allStacks) {
+    const startIdx = stack.candleIndex;
+    let foundMitigation = false;
+
+    for (let k = startIdx + 1; k < candles.length; k++) {
+      const nextCandle = candles[k];
+      // A candle reaches the key levels if its [low, high] price range overlaps the stack's [bottomPrice, topPrice]
+      if (nextCandle.low <= stack.topPrice && nextCandle.high >= stack.bottomPrice) {
+        stack.mitigated = true;
+        stack.mitigatedCandleIndex = k;
+        stack.mitigatedCandleTime = nextCandle.time;
+        stack.mitigatedCandleTimeStr = nextCandle.timeStr;
+        
+        // Touch price: where the candle tested the key levels
+        if (stack.side === 'buy') {
+          stack.mitigatedPrice = Math.min(stack.topPrice, Math.max(stack.bottomPrice, nextCandle.low));
+        } else {
+          stack.mitigatedPrice = Math.max(stack.bottomPrice, Math.min(stack.topPrice, nextCandle.high));
+        }
+        stack.status = 'mitigated';
+        foundMitigation = true;
+        break; // Stop at the NEXT candle that reaches those key levels!
+      }
+    }
+
+    if (!foundMitigation) {
+      stack.mitigated = false;
+      stack.mitigatedCandleIndex = null;
+      stack.status = 'active';
+    }
+  }
+
+  return allStacks;
 }
 
 /**

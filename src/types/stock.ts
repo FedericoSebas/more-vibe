@@ -57,6 +57,33 @@ export interface FootprintFilterConfig {
   imbalanceMode: FootprintImbalanceMode; // 'level' (same price level) | 'diagonal'
   minVolumeThreshold: number; // minimum contracts threshold
   showRatioBadge?: boolean;
+  showStackedImbalances?: boolean;
+  minStackLevels?: number; // default 3 consecutive levels
+  reflectToNextCandle?: boolean; // reflect key levels to the next candle that reaches them
+  showTestedLevels?: boolean; // display mitigated/tested reflections
+}
+
+export interface StackedImbalance {
+  id: string;
+  candleIndex: number;
+  candleTime: number;
+  candleTimeStr: string;
+  side: 'buy' | 'sell';
+  count: number; // number of consecutive levels (e.g. 3, 4, 5)
+  topPrice: number;
+  bottomPrice: number;
+  pocPrice: number;
+  tickSize: number;
+  levels: FootprintLevel[];
+  totalVolume: number;
+  totalDelta: number;
+  // Reflection / Key level reach state
+  mitigated: boolean;
+  mitigatedCandleIndex: number | null; // index of the first subsequent candle that reaches these key levels
+  mitigatedCandleTime: number | null;
+  mitigatedCandleTimeStr?: string;
+  mitigatedPrice: number | null;
+  status: 'active' | 'mitigated';
 }
 
 export interface CandleFootprint {
@@ -68,6 +95,7 @@ export interface CandleFootprint {
   minDelta: number;
   maxDelta: number;
   tickSize: number;
+  stackedImbalances?: StackedImbalance[];
 }
 
 export interface Level2Order {
@@ -119,6 +147,7 @@ export interface IndicatorVisibility {
   volumeProfile: boolean;
   macd: boolean;
   barStats?: boolean;
+  stackedImbalances?: boolean;
 }
 
 export interface VolumeProfileLevel {
