@@ -436,6 +436,10 @@ export default function App() {
             <span>REAL NASDAQ FEED ACTIVE</span>
           </span>
           <span className="text-slate-600">·</span>
+          <span className="text-sky-400 font-semibold">MON, OCT 26, 2026</span>
+          <span className="text-slate-600">·</span>
+          <span className="text-amber-400 font-semibold">PRE-MARKET</span>
+          <span className="text-slate-600">·</span>
           <span className="text-slate-300">Symbol: {selectedStock.ticker}</span>
           <span className="text-slate-600">·</span>
           <span>Bars: {candles.length}</span>
@@ -529,6 +533,7 @@ export default function App() {
           activeCategory={activeCategory}
           onChangeCategory={setActiveCategory}
           updatedTickers={updatedTickers}
+          onRefresh={loadRealScannerQuotes}
         />
       </div>
 

@@ -25,7 +25,8 @@ import {
   calculateSMA, 
   calculateVWAP, 
   calculateVolumeProfile,
-  formatCompactVolume 
+  formatCompactVolume,
+  getEasternTimeParts
 } from '../utils/stockData';
 import { 
   generateCandleFootprint, 
@@ -706,11 +707,11 @@ export const StockChart: React.FC<StockChartProps> = ({
       for (let i = 0; i < visibleCandles.length; i++) {
         const c = visibleCandles[i];
         const x = indexToX(i);
-        const timeMatch = c.timeStr ? c.timeStr.match(/(\d{1,2}):(\d{2})/) : null;
-        const dObj = new Date(c.time);
-        const hour = timeMatch ? parseInt(timeMatch[1], 10) : dObj.getHours();
-        const min = timeMatch ? parseInt(timeMatch[2], 10) : dObj.getMinutes();
-        const day = dObj.getDate();
+        const et = getEasternTimeParts(c.time);
+        const hour = et.hour;
+        const min = et.minute;
+        const day = et.day;
+        const monthName = months[et.month - 1] || 'Oct';
 
         // Check if this bar is an hour tick or day transition
         const isNewDay = prevDay !== -1 && day !== prevDay;
@@ -735,7 +736,7 @@ export const StockChart: React.FC<StockChartProps> = ({
             // Label text: date on first tick / day rollover, otherwise 5 AM, 6 AM, etc.
             let labelText = '';
             if (i === 0 || isNewDay) {
-              labelText = `${months[dObj.getMonth()]} ${dObj.getDate()}`;
+              labelText = `${monthName} ${day}`;
             } else {
               const h12 = hour % 12 === 0 ? 12 : hour % 12;
               const ampm = hour < 12 ? 'AM' : 'PM';
@@ -2337,17 +2338,17 @@ export const StockChart: React.FC<StockChartProps> = ({
       let hudX = 12;
       const hudY = 8;
 
-      const dObj = new Date(activeCandle.time);
+      const et = getEasternTimeParts(activeCandle.time);
       const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      const monthName = months[et.month - 1] || 'Oct';
       let hudTime = '';
       if (timeframe === 'D') {
-        hudTime = `${months[dObj.getMonth()]} ${dObj.getDate().toString().padStart(2, '0')}, ${dObj.getFullYear()}`;
+        hudTime = `${monthName} ${String(et.day).padStart(2, '0')}, ${et.year}`;
       } else {
-        const hours = dObj.getHours().toString().padStart(2, '0');
-        const mins = dObj.getMinutes().toString().padStart(2, '0');
-        hudTime = `${months[dObj.getMonth()]} ${dObj.getDate().toString().padStart(2, '0')} ${hours}:${mins}`;
+        hudTime = `${monthName} ${String(et.day).padStart(2, '0')} ${String(et.hour).padStart(2, '0')}:${String(et.minute).padStart(2, '0')}`;
       }
-      const timeTag = `${hudTime} [${timeframe}]`;
+      const sessionLabel = activeCandle.session ? ` (${activeCandle.session.toUpperCase()})` : '';
+      const timeTag = `${hudTime}${sessionLabel} [${timeframe}]`;
       ctx.fillStyle = hoveredCandleIndex >= 0 ? '#38bdf8' : '#94a3b8';
       ctx.fillText(timeTag, hudX, hudY);
       hudX += Math.max(140, Math.round(ctx.measureText(timeTag).width + 12));

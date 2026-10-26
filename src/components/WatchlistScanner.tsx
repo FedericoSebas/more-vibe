@@ -4,7 +4,8 @@ import {
   MoreVertical, 
   Info, 
   ChevronDown, 
-  Search
+  Search,
+  RefreshCw
 } from 'lucide-react';
 import { StockQuote } from '../types/stock';
 import { soundManager } from '../utils/sound';
@@ -18,6 +19,7 @@ interface WatchlistScannerProps {
   activeCategory: string;
   onChangeCategory: (category: string) => void;
   updatedTickers: Record<string, 'up' | 'down'>;
+  onRefresh?: () => void;
 }
 
 type SortColumn = 'ticker' | 'volume' | 'm1Change' | 'm5Change' | 'm15Change' | 'h1Change' | 'h4Change' | 'changePercent' | 'openPercent';
@@ -30,21 +32,24 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
   onOpenCustomize,
   activeCategory,
   onChangeCategory,
-  updatedTickers
+  updatedTickers,
+  onRefresh
 }) => {
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState<SortColumn>('changePercent');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [showCategoryMenu, setShowCategoryMenu] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [refreshToast, setRefreshToast] = useState<string | null>(null);
 
   const categories = [
-    { id: 'stocks', label: 'stocks (All Active)' },
-    { id: 'gainers', label: 'Top Gainers (>20%)' },
-    { id: 'active', label: 'Most Active Volume' },
-    { id: 'nasdaq100', label: 'NASDAQ 100 Giants' },
-    { id: 'biotech', label: 'Biotech & Health Movers' },
-    { id: 'favorites', label: 'Starred Favorites' },
+    { id: 'stocks', label: 'stocks (All Active)', count: stocks.length },
+    { id: 'gainers', label: 'Top Gainers (>20%)', count: stocks.filter(s => s.changePercent >= 20).length },
+    { id: 'active', label: 'Most Active Volume', count: stocks.filter(s => s.volume >= 10000000).length },
+    { id: 'nasdaq100', label: 'NASDAQ 100 Giants', count: 24 },
+    { id: 'biotech', label: 'Biotech & Health Movers', count: stocks.filter(s => s.sector.includes('Biotechnology') || s.sector.includes('Medical')).length },
+    { id: 'favorites', label: 'Starred Favorites', count: stocks.filter(s => s.isFavorite).length },
   ];
 
   const handleSort = (col: SortColumn) => {
@@ -143,7 +148,7 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
             </button>
 
             {showCategoryMenu && (
-              <div className="absolute top-full left-0 mt-1 w-48 bg-[#121824] border border-[#253247] rounded-md shadow-2xl z-50 py-1">
+              <div className="absolute top-full left-0 mt-1 w-56 bg-[#121824] border border-[#253247] rounded-md shadow-2xl z-50 py-1">
                 {categories.map(cat => (
                   <button
                     key={cat.id}
@@ -157,13 +162,14 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
                     }`}
                   >
                     <span>{cat.label}</span>
+                    <span className="font-mono text-[10px] text-slate-500">({cat.count})</span>
                   </button>
                 ))}
               </div>
             )}
           </div>
 
-          <button className="p-1 text-slate-500 hover:text-slate-300" title="Scanner Info">
+          <button className="p-1 text-slate-500 hover:text-slate-300" title="Scanner Info: Updated to Monday, Oct 26, 2026">
             <Info className="w-3.5 h-3.5" />
           </button>
           <button className="p-1 text-slate-500 hover:text-slate-300" title="Scanner Options">
@@ -181,6 +187,74 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
             <span>Customize</span>
           </button>
         </div>
+      </div>
+
+      {/* Market Date & Active Trading Session Bar */}
+      <div className="px-3 py-1.5 bg-[#0d131f] border-b border-[#1b2537] flex items-center justify-between text-[11px] shrink-0 select-none">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1 text-sky-400 font-bold tracking-tight font-mono text-xs">
+            <span>📅 Mon, Oct 26, 2026</span>
+          </span>
+          <span className="text-slate-600">·</span>
+          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-950/70 text-amber-300 border border-amber-800/60 font-mono">
+            <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+            <span>PRE-MARKET</span>
+          </span>
+        </div>
+
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              setIsRefreshing(true);
+              soundManager.playSelect();
+              onRefresh?.();
+              setRefreshToast('Synced to Oct 26');
+              setTimeout(() => {
+                setIsRefreshing(false);
+                setTimeout(() => setRefreshToast(null), 1800);
+              }, 600);
+            }}
+            className="flex items-center gap-1 px-2 py-0.5 rounded bg-[#162030] hover:bg-[#1f2d44] border border-[#23334c] text-slate-300 hover:text-white transition-all text-[10px] font-mono cursor-pointer"
+            title="Refresh screener data for Monday, October 26, 2026"
+          >
+            <RefreshCw className={`w-3 h-3 text-sky-400 ${isRefreshing ? 'animate-spin' : ''}`} />
+            <span>{refreshToast || 'Sync Oct 26'}</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Quick Category Chips */}
+      <div className="px-2.5 py-1 bg-[#0b0e16] border-b border-[#18212f] flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0 text-[10px] font-mono">
+        {categories.map(cat => {
+          const isActive = activeCategory === cat.id;
+          const shortLabels: Record<string, string> = {
+            stocks: 'All Active',
+            gainers: 'Top Gainers',
+            active: 'High Vol',
+            nasdaq100: 'NASDAQ 100',
+            biotech: 'Biotech',
+            favorites: 'Starred'
+          };
+          return (
+            <button
+              key={cat.id}
+              onClick={() => {
+                onChangeCategory(cat.id);
+                setCurrentPage(1);
+              }}
+              className={`px-2 py-0.5 rounded whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer ${
+                isActive
+                  ? 'bg-sky-500/20 text-sky-300 border border-sky-500/50 font-bold'
+                  : 'bg-[#121824] hover:bg-[#1a2333] text-slate-400 hover:text-slate-200 border border-[#1e2738]'
+              }`}
+            >
+              <span>{shortLabels[cat.id] || cat.id}</span>
+              <span className={`text-[9px] ${isActive ? 'text-sky-300' : 'text-slate-500'}`}>
+                ({cat.count})
+              </span>
+            </button>
+          );
+        })}
       </div>
 
       {/* Quick Search Strip */}

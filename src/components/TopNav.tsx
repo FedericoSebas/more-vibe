@@ -42,7 +42,7 @@ export const TopNav: React.FC<TopNavProps> = ({
   useEffect(() => {
     const updateTime = () => {
       const now = new Date();
-      // Format: SAT OCT 24 2026 6:14 PM ET
+      // Format: MON OCT 26 2026 7:55 AM ET
       const options: Intl.DateTimeFormatOptions = {
         weekday: 'short',
         month: 'short',
