@@ -52,6 +52,7 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
 
   // Debounced search on server to dynamically discover non-NASDAQ & NYSE/AMEX tickets
   useEffect(() => {
+    if (activeCategory === 'cryptos') return;
     const q = search.trim();
     if (!q || q.length < 1) return;
 
@@ -111,21 +112,11 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
     }, 350);
 
     return () => clearTimeout(timeout);
-  }, [search, stocks, onAddDiscoveredStock]);
+  }, [search, stocks, onAddDiscoveredStock, activeCategory]);
 
   const categories = [
-    { id: 'stocks', label: 'All Markets (Active)', count: stocks.length },
-    { id: 'nasdaq', label: 'NASDAQ Market', count: stocks.filter(s => (s.exchange || s.market || '').toUpperCase().includes('NASDAQ')).length },
-    { id: 'nyse', label: 'NYSE Market', count: stocks.filter(s => (s.exchange || s.market || '').toUpperCase().includes('NYSE')).length },
-    { id: 'amex', label: 'AMEX & Arca', count: stocks.filter(s => {
-      const ex = (s.exchange || s.market || '').toUpperCase();
-      return ex.includes('AMEX') || ex.includes('ARCA');
-    }).length },
-    { id: 'gainers', label: 'Top Gainers (>20%)', count: stocks.filter(s => s.changePercent >= 20).length },
-    { id: 'active', label: 'Most Active Volume', count: stocks.filter(s => s.volume >= 10000000).length },
-    { id: 'nasdaq100', label: 'Mega Caps & Giants', count: 24 },
-    { id: 'biotech', label: 'Biotech & Health Movers', count: stocks.filter(s => s.sector.includes('Biotechnology') || s.sector.includes('Medical')).length },
-    { id: 'favorites', label: 'Starred Favorites', count: stocks.filter(s => s.isFavorite).length },
+    { id: 'stocks', label: 'stocks', count: stocks.length },
+    { id: 'cryptos', label: 'cryptos', count: 0 },
   ];
 
   const handleSort = (col: SortColumn) => {
@@ -138,36 +129,27 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
   };
 
   // Filter stocks by market, category & search
-  const filteredStocks = stocks.filter(s => {
-    // Market tab filter
-    if (selectedMarket !== 'ALL') {
-      const ex = (s.exchange || s.market || '').toUpperCase();
-      if (!ex.includes(selectedMarket)) return false;
-    }
+  const filteredStocks = activeCategory === 'cryptos'
+    ? []
+    : stocks.filter(s => {
+        // Market tab filter
+        if (selectedMarket !== 'ALL') {
+          const ex = (s.exchange || s.market || '').toUpperCase();
+          if (!ex.includes(selectedMarket)) return false;
+        }
 
-    if (search.trim()) {
-      const q = search.toLowerCase();
-      const tickerMatch = s.ticker.toLowerCase().includes(q);
-      const nameMatch = s.name.toLowerCase().includes(q);
-      const exchangeMatch = (s.exchange || s.market || '').toLowerCase().includes(q);
-      if (!tickerMatch && !nameMatch && !exchangeMatch) {
-        return false;
-      }
-    }
+        if (search.trim()) {
+          const q = search.toLowerCase();
+          const tickerMatch = s.ticker.toLowerCase().includes(q);
+          const nameMatch = s.name.toLowerCase().includes(q);
+          const exchangeMatch = (s.exchange || s.market || '').toLowerCase().includes(q);
+          if (!tickerMatch && !nameMatch && !exchangeMatch) {
+            return false;
+          }
+        }
 
-    if (activeCategory === 'nasdaq') return (s.exchange || s.market || '').toUpperCase().includes('NASDAQ');
-    if (activeCategory === 'nyse') return (s.exchange || s.market || '').toUpperCase().includes('NYSE');
-    if (activeCategory === 'amex') {
-      const ex = (s.exchange || s.market || '').toUpperCase();
-      return ex.includes('AMEX') || ex.includes('ARCA');
-    }
-    if (activeCategory === 'gainers') return s.changePercent >= 20;
-    if (activeCategory === 'active') return s.volume >= 10000000;
-    if (activeCategory === 'nasdaq100') return ['NVDA', 'AAPL', 'TSLA', 'QQQ', 'MSFT', 'AMZN', 'META', 'GOOG', 'GOOGL', 'AMD', 'NFLX', 'INTC', 'COST', 'AVGO', 'QCOM', 'TXN', 'ADBE', 'CSCO', 'PEP', 'TMUS', 'AMGN', 'HON', 'SBUX', 'ISRG', 'BKNG', 'MDLZ', 'GILD', 'ADP', 'VRTX', 'REGN', 'PANW', 'LULU', 'SNPS', 'CDNS', 'ASML', 'MSTR', 'COIN', 'PLTR', 'ARM', 'SMCI'].includes(s.ticker);
-    if (activeCategory === 'biotech') return s.sector.includes('Biotechnology') || s.sector.includes('Medical');
-    if (activeCategory === 'favorites') return s.isFavorite;
-    return true;
-  });
+        return true;
+      });
 
   // Sort
   const sortedStocks = [...filteredStocks].sort((a, b) => {
@@ -324,44 +306,35 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
         </div>
       </div>
 
-      {/* Market Selector & Quick Category Chips */}
-      <div className="px-2.5 py-1 bg-[#090d15] border-b border-[#141b27] flex items-center justify-between gap-1 overflow-x-auto no-scrollbar shrink-0 text-[10px] font-mono">
-        <div className="flex items-center gap-1">
-          <span className="text-slate-500 text-[10px] uppercase font-bold mr-0.5">Market:</span>
-          {(['ALL', 'NASDAQ', 'NYSE', 'AMEX'] as const).map(mkt => (
-            <button
-              key={mkt}
-              onClick={() => {
-                setSelectedMarket(mkt);
-                setCurrentPage(1);
-              }}
-              className={`px-2 py-0.5 rounded transition-all cursor-pointer font-bold ${
-                selectedMarket === mkt
-                  ? 'bg-sky-500 text-slate-950 shadow-sm shadow-sky-500/20'
-                  : 'bg-[#131b28] hover:bg-[#1a2538] text-slate-400 hover:text-slate-200 border border-[#1e2a3c]'
-              }`}
-            >
-              {mkt}
-            </button>
-          ))}
+      {/* Market Selector Tabs (Stocks) */}
+      {activeCategory === 'stocks' && (
+        <div className="px-2.5 py-1 bg-[#090d15] border-b border-[#141b27] flex items-center justify-between gap-1 overflow-x-auto no-scrollbar shrink-0 text-[10px] font-mono">
+          <div className="flex items-center gap-1">
+            <span className="text-slate-500 text-[10px] uppercase font-bold mr-0.5">Market:</span>
+            {(['ALL', 'NASDAQ', 'NYSE', 'AMEX'] as const).map(mkt => (
+              <button
+                key={mkt}
+                onClick={() => {
+                  setSelectedMarket(mkt);
+                  setCurrentPage(1);
+                }}
+                className={`px-2 py-0.5 rounded transition-all cursor-pointer font-bold ${
+                  selectedMarket === mkt
+                    ? 'bg-sky-500 text-slate-950 shadow-sm shadow-sky-500/20'
+                    : 'bg-[#131b28] hover:bg-[#1a2538] text-slate-400 hover:text-slate-200 border border-[#1e2a3c]'
+                }`}
+              >
+                {mkt}
+              </button>
+            ))}
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Quick Category Chips */}
       <div className="px-2.5 py-1 bg-[#0b0e16] border-b border-[#18212f] flex items-center gap-1 overflow-x-auto no-scrollbar shrink-0 text-[10px] font-mono">
         {categories.map(cat => {
           const isActive = activeCategory === cat.id;
-          const shortLabels: Record<string, string> = {
-            stocks: 'All Active',
-            nasdaq: 'NASDAQ',
-            nyse: 'NYSE',
-            amex: 'AMEX',
-            gainers: 'Top Gainers',
-            active: 'High Vol',
-            nasdaq100: 'Giants',
-            biotech: 'Biotech',
-            favorites: 'Starred'
-          };
           return (
             <button
               key={cat.id}
@@ -369,13 +342,13 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
                 onChangeCategory(cat.id);
                 setCurrentPage(1);
               }}
-              className={`px-2 py-0.5 rounded whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer ${
+              className={`px-2.5 py-0.5 rounded whitespace-nowrap transition-colors flex items-center gap-1 cursor-pointer capitalize ${
                 isActive
                   ? 'bg-sky-500/20 text-sky-300 border border-sky-500/50 font-bold'
                   : 'bg-[#121824] hover:bg-[#1a2333] text-slate-400 hover:text-slate-200 border border-[#1e2738]'
               }`}
             >
-              <span>{shortLabels[cat.id] || cat.id}</span>
+              <span>{cat.label}</span>
               <span className={`text-[9px] ${isActive ? 'text-sky-300' : 'text-slate-500'}`}>
                 ({cat.count})
               </span>
@@ -389,13 +362,14 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
         <Search className="w-3.5 h-3.5 text-slate-500 shrink-0" />
         <input
           type="text"
-          placeholder="Filter ticker / company / market (e.g. NYSE, BAK, CLRO)..."
+          placeholder={activeCategory === 'cryptos' ? "Cryptos section currently empty..." : "Filter ticker / company / market (e.g. NYSE, BAK, CLRO)..."}
           value={search}
+          disabled={activeCategory === 'cryptos'}
           onChange={(e) => {
             setSearch(e.target.value);
             setCurrentPage(1);
           }}
-          className="w-full bg-transparent text-slate-200 placeholder-slate-600 text-xs focus:outline-none font-mono"
+          className="w-full bg-transparent text-slate-200 placeholder-slate-600 text-xs focus:outline-none font-mono disabled:opacity-50"
         />
         {isSearchingServer && (
           <span className="flex items-center gap-1 text-[10px] text-sky-400 font-mono shrink-0">
@@ -516,7 +490,12 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
             {pageStocks.length === 0 && (
               <tr>
                 <td colSpan={9} className="p-8 text-center text-slate-500 text-xs">
-                  {isSearchingServer ? (
+                  {activeCategory === 'cryptos' ? (
+                    <div className="flex flex-col items-center justify-center gap-1.5 py-6 font-mono text-center">
+                      <span className="text-slate-300 font-semibold text-xs">No cryptocurrencies listed</span>
+                      <span className="text-slate-500 text-[11px]">Cryptos section is currently empty</span>
+                    </div>
+                  ) : isSearchingServer ? (
                     <div className="flex items-center justify-center gap-2 text-sky-400 font-mono">
                       <RefreshCw className="w-3.5 h-3.5 animate-spin" />
                       <span>Searching all markets on server for &quot;{search}&quot;...</span>
