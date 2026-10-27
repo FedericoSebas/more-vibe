@@ -207,33 +207,87 @@ export default function App() {
       };
 
       setStocks(prev => {
-        return prev.map(stock => {
+        const existingMap = new Map(prev.map(s => [s.ticker, s]));
+        const updatedList: StockQuote[] = [];
+
+        // 1. Update existing stocks
+        for (const stock of prev) {
           const match = data.find(d => d.ticker === stock.ticker);
-          if (!match) return stock;
-
-          const isUp = match.price >= stock.price;
-          if (match.price !== stock.price) {
-            flashMap[stock.ticker] = isUp ? 'up' : 'down';
+          if (!match) {
+            updatedList.push(stock);
+          } else {
+            const isUp = match.price >= stock.price;
+            if (match.price !== stock.price) {
+              flashMap[stock.ticker] = isUp ? 'up' : 'down';
+            }
+            updatedList.push({
+              ...stock,
+              price: safeNum(match.price, stock.price),
+              change: safeNum(match.change, stock.change),
+              changePercent: safeNum(match.changePercent, stock.changePercent),
+              volume: safeNum(match.volume, stock.volume),
+              high: safeNum(match.high, stock.high),
+              low: safeNum(match.low, stock.low),
+              open: safeNum(match.open, stock.open),
+              prevClose: safeNum(match.prevClose, stock.prevClose),
+              openPercent: safeNum(match.openPercent, stock.openPercent),
+              m1Change: safeNum(match.m1Change, stock.m1Change),
+              m5Change: safeNum(match.m5Change, stock.m5Change),
+              m15Change: safeNum(match.m15Change, stock.m15Change),
+              h1Change: safeNum(match.h1Change, stock.h1Change),
+              h4Change: safeNum(match.h4Change, stock.h4Change),
+              exchange: match.exchange || stock.exchange || 'NASDAQ',
+              market: match.market || match.exchange || stock.market || 'NASDAQ',
+            });
           }
+        }
 
-          return {
-            ...stock,
-            price: safeNum(match.price, stock.price),
-            change: safeNum(match.change, stock.change),
-            changePercent: safeNum(match.changePercent, stock.changePercent),
-            volume: safeNum(match.volume, stock.volume),
-            high: safeNum(match.high, stock.high),
-            low: safeNum(match.low, stock.low),
-            open: safeNum(match.open, stock.open),
-            prevClose: safeNum(match.prevClose, stock.prevClose),
-            openPercent: safeNum(match.openPercent, stock.openPercent),
-            m1Change: safeNum(match.m1Change, stock.m1Change),
-            m5Change: safeNum(match.m5Change, stock.m5Change),
-            m15Change: safeNum(match.m15Change, stock.m15Change),
-            h1Change: safeNum(match.h1Change, stock.h1Change),
-            h4Change: safeNum(match.h4Change, stock.h4Change),
-          };
-        });
+        // 2. Append all stocks from server not yet in the list (e.g. NYSE, AMEX, or tickets from tickets.txt)
+        for (const item of data) {
+          if (!existingMap.has(item.ticker)) {
+            const price = safeNum(item.price, 10.0);
+            const prevClose = safeNum(item.prevClose, price);
+            const open = safeNum(item.open, prevClose);
+            const change = safeNum(item.change, price - prevClose);
+            const changePercent = safeNum(item.changePercent, prevClose ? (change / prevClose) * 100 : 0);
+            const openPercent = safeNum(item.openPercent, open ? ((price - open) / open) * 100 : 0);
+            const volume = safeNum(item.volume, 100000);
+            const exchange = item.exchange || item.market || 'US';
+
+            updatedList.push({
+              ticker: item.ticker,
+              name: item.name || item.companyName || item.ticker,
+              price,
+              change,
+              changePercent,
+              openPercent,
+              volume,
+              avgVolume: safeNum(item.avgVolume, volume),
+              high: safeNum(item.high, Math.max(open, price)),
+              low: safeNum(item.low, Math.min(open, price)),
+              open,
+              prevClose,
+              m1Change: safeNum(item.m1Change, 0),
+              m5Change: safeNum(item.m5Change, 0),
+              m15Change: safeNum(item.m15Change, 0),
+              h1Change: safeNum(item.h1Change, 0),
+              h4Change: safeNum(item.h4Change, changePercent),
+              tagColor: item.tagColor || '#3b82f6',
+              isFavorite: false,
+              marketCap: typeof item.marketCap === 'number' ? `$${(item.marketCap / 1e6).toFixed(1)}M` : (item.marketCap || '$0M'),
+              peRatio: safeNum(item.pe || item.peRatio, 0),
+              floatShares: item.floatShares || 'N/A',
+              high52w: safeNum(item.high52w || item.fiftyTwoWeekHigh, Math.max(price, 10)),
+              low52w: safeNum(item.low52w || item.fiftyTwoWeekLow, Math.min(price, 10)),
+              sector: item.sector || 'Equities',
+              description: item.description || '',
+              exchange,
+              market: exchange,
+            });
+          }
+        }
+
+        return updatedList;
       });
 
       if (Object.keys(flashMap).length > 0) {
@@ -367,6 +421,16 @@ export default function App() {
     setPanOffset(0);
   };
 
+  const handleAddDiscoveredStock = useCallback((newStock: StockQuote) => {
+    setStocks(prev => {
+      const exists = prev.some(s => s.ticker === newStock.ticker);
+      if (exists) {
+        return prev.map(s => s.ticker === newStock.ticker ? { ...s, ...newStock } : s);
+      }
+      return [newStock, ...prev];
+    });
+  }, []);
+
   const handleToggleFavorite = (ticker: string) => {
     setStocks(prev => prev.map(s => {
       if (s.ticker === ticker) {
@@ -428,6 +492,7 @@ export default function App() {
         currentStock={selectedStock}
         allStocks={stocks}
         onSelectStock={handleSelectStock}
+        onAddDiscoveredStock={handleAddDiscoveredStock}
         onToggleFavorite={handleToggleFavorite}
         onOpenOverview={() => setIsOverviewOpen(true)}
         timeframe={timeframe}
@@ -547,6 +612,7 @@ export default function App() {
             stocks={visibleScannerStocks}
             selectedTicker={selectedStock.ticker}
             onSelectStock={handleSelectStock}
+            onAddDiscoveredStock={handleAddDiscoveredStock}
             onToggleFavorite={handleToggleFavorite}
             onOpenCustomize={() => setIsCustomizeOpen(true)}
             activeCategory={activeCategory}

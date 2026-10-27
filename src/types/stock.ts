@@ -193,6 +193,8 @@ export interface StockQuote {
   low52w: number;
   sector: string;
   description: string;
+  exchange?: string;
+  market?: string;
 }
 
 export interface DrawnObject {

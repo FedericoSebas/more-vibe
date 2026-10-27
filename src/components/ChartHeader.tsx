@@ -20,6 +20,7 @@ interface ChartHeaderProps {
   currentStock: StockQuote;
   allStocks: StockQuote[];
   onSelectStock: (stock: StockQuote) => void;
+  onAddDiscoveredStock?: (stock: StockQuote) => void;
   onToggleFavorite: (ticker: string) => void;
   onOpenOverview: () => void;
   timeframe: Timeframe;
@@ -42,6 +43,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
   currentStock,
   allStocks,
   onSelectStock,
+  onAddDiscoveredStock,
   onToggleFavorite,
   onOpenOverview,
   timeframe,
@@ -104,9 +106,72 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const [isSearchingServer, setIsSearchingServer] = useState(false);
+
+  // Debounced server search for any market symbol not already loaded in local list
+  useEffect(() => {
+    const q = searchQuery.trim();
+    if (!q || q.length < 1) return;
+    const exactLocal = allStocks.some((s) => s.ticker.toLowerCase() === q.toLowerCase());
+    if (exactLocal) return;
+
+    const timeout = setTimeout(async () => {
+      setIsSearchingServer(true);
+      try {
+        const res = await fetch(`/api/stocks?search=${encodeURIComponent(q)}`);
+        if (res.ok) {
+          const results = await res.json();
+          if (Array.isArray(results) && results.length > 0) {
+            results.forEach((item: any) => {
+              if (onAddDiscoveredStock && item && item.ticker) {
+                onAddDiscoveredStock({
+                  ticker: item.ticker,
+                  name: item.name || item.companyName || item.ticker,
+                  price: typeof item.price === 'number' ? item.price : 10,
+                  change: typeof item.change === 'number' ? item.change : 0,
+                  changePercent: typeof item.changePercent === 'number' ? item.changePercent : 0,
+                  openPercent: typeof item.openPercent === 'number' ? item.openPercent : 0,
+                  volume: typeof item.volume === 'number' ? item.volume : 100000,
+                  avgVolume: typeof item.avgVolume === 'number' ? item.avgVolume : 100000,
+                  high: typeof item.high === 'number' ? item.high : item.price || 10,
+                  low: typeof item.low === 'number' ? item.low : item.price || 10,
+                  open: typeof item.open === 'number' ? item.open : item.price || 10,
+                  prevClose: typeof item.prevClose === 'number' ? item.prevClose : item.price || 10,
+                  m1Change: typeof item.m1Change === 'number' ? item.m1Change : 0,
+                  m5Change: typeof item.m5Change === 'number' ? item.m5Change : 0,
+                  m15Change: typeof item.m15Change === 'number' ? item.m15Change : 0,
+                  h1Change: typeof item.h1Change === 'number' ? item.h1Change : 0,
+                  h4Change: typeof item.h4Change === 'number' ? item.h4Change : (item.changePercent || 0),
+                  tagColor: item.tagColor || '#3b82f6',
+                  isFavorite: false,
+                  marketCap: typeof item.marketCap === 'number' ? `$${(item.marketCap / 1e6).toFixed(1)}M` : (item.marketCap || '$0M'),
+                  peRatio: typeof item.pe === 'number' ? item.pe : 0,
+                  floatShares: item.floatShares || 'N/A',
+                  high52w: typeof item.high52w === 'number' ? item.high52w : 10,
+                  low52w: typeof item.low52w === 'number' ? item.low52w : 10,
+                  sector: item.sector || 'Equities',
+                  description: item.description || '',
+                  exchange: item.exchange || item.market || 'US',
+                  market: item.exchange || item.market || 'US',
+                });
+              }
+            });
+          }
+        }
+      } catch {
+        // Quietly ignore
+      } finally {
+        setIsSearchingServer(false);
+      }
+    }, 350);
+
+    return () => clearTimeout(timeout);
+  }, [searchQuery, allStocks, onAddDiscoveredStock]);
+
   const filteredStocks = allStocks.filter(s => 
     s.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    s.name.toLowerCase().includes(searchQuery.toLowerCase())
+    s.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    (s.exchange || '').toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const timeframes: Timeframe[] = ['1M', '5M', '10M', '1H', '4H', 'D'];
@@ -133,22 +198,30 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
               style={{ backgroundColor: currentStock.tagColor || '#ef4444' }} 
             />
             <span className="text-sm font-mono">{currentStock.ticker}</span>
+            {currentStock.exchange && (
+              <span className="text-[9px] px-1 py-0.2 rounded font-mono font-normal bg-[#131b26] text-sky-400 border border-[#1e2a3c]">
+                {currentStock.exchange}
+              </span>
+            )}
             <ChevronDown className="w-3 h-3 text-slate-400" />
           </button>
 
           {/* Search Dropdown Popover */}
           {showSymbolSearch && (
-            <div className="absolute top-full left-0 mt-1 w-72 bg-[#121824] border border-[#253247] rounded-md shadow-2xl z-50 overflow-hidden">
+            <div className="absolute top-full left-0 mt-1 w-80 bg-[#121824] border border-[#253247] rounded-md shadow-2xl z-50 overflow-hidden">
               <div className="p-2 border-b border-[#1e293b] flex items-center gap-2">
                 <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 <input
                   type="text"
-                  placeholder="Search NASDAQ symbol or company..."
+                  placeholder="Search symbol, company, or market (NASDAQ, NYSE, AMEX)..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   autoFocus
                   className="w-full bg-transparent text-slate-100 placeholder-slate-500 text-xs focus:outline-none"
                 />
+                {isSearchingServer && (
+                  <span className="text-[10px] text-sky-400 animate-pulse font-mono">Searching...</span>
+                )}
               </div>
               <div className="max-h-64 overflow-y-auto divide-y divide-[#182232]">
                 {filteredStocks.slice(0, 60).map((stock) => (
@@ -169,7 +242,14 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                         style={{ backgroundColor: stock.tagColor }} 
                       />
                       <div>
-                        <div className="font-mono font-bold text-slate-200">{stock.ticker}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-mono font-bold text-slate-200">{stock.ticker}</span>
+                          {stock.exchange && (
+                            <span className="text-[9px] px-1 py-0.2 rounded font-mono font-semibold bg-[#1a2538] text-sky-400 border border-[#24334a]">
+                              {stock.exchange}
+                            </span>
+                          )}
+                        </div>
                         <div className="text-[10px] text-slate-400 truncate max-w-[130px]">{stock.name}</div>
                       </div>
                     </div>
@@ -187,8 +267,12 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                   </div>
                 )}
                 {filteredStocks.length === 0 && (
-                  <div className="p-4 text-center text-slate-500 text-xs">
-                    No NASDAQ ticker found for &quot;{searchQuery}&quot;
+                  <div className="p-4 text-center text-slate-500 text-xs font-mono">
+                    {isSearchingServer ? (
+                      <span>Searching all markets for &quot;{searchQuery}&quot;...</span>
+                    ) : (
+                      <span>No ticker found across markets for &quot;{searchQuery}&quot;</span>
+                    )}
                   </div>
                 )}
               </div>
