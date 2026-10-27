@@ -83,6 +83,54 @@ interface YahooSession {
 let yahooSession: YahooSession | null = null;
 let sessionPromise: Promise<YahooSession | null> | null = null;
 
+async function fetchSingleQuoteViaChart(symbol: string): Promise<StockData | null> {
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=1d`;
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+      }
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    const meta = json.chart?.result?.[0]?.meta;
+    if (!meta) return null;
+
+    const price = meta.regularMarketPrice || 0;
+    const prevClose = meta.chartPreviousClose || meta.previousClose || price;
+    const open = meta.regularMarketOpen || price;
+    const change = price - prevClose;
+    const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+
+    return {
+      symbol,
+      ticker: symbol,
+      name: meta.shortName || meta.symbol || symbol,
+      companyName: meta.longName || meta.shortName || symbol,
+      price,
+      lastSale: price,
+      change: Math.round(change * 10000) / 10000,
+      netChange: Math.round(change * 10000) / 10000,
+      changePercent: Number(changePercent.toFixed(2)),
+      pctchange: Number(changePercent.toFixed(2)),
+      pChange: Number(changePercent.toFixed(2)),
+      changesPercentage: Number(changePercent.toFixed(2)),
+      volume: meta.regularMarketVolume || 0,
+      open,
+      high: meta.regularMarketDayHigh || price,
+      low: meta.regularMarketDayLow || price,
+      prevClose,
+      openPercent: calculateOpenPercent(price, open),
+      marketCap: 0,
+      sector: 'Equities',
+      industry: 'General',
+      updatedAt: new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function getYahooSession(force = false): Promise<YahooSession | null> {
   const now = Date.now();
   if (!force && yahooSession && now - yahooSession.timestamp < 30 * 60 * 1000) {
@@ -175,21 +223,24 @@ function chunkArray<T>(arr: T[], chunkSize: number): T[][] {
 // Initial Stock Database Preload (from nasdaqStocks.json)
 // ============================================================================
 function loadInitialStocksFromDisk(): StockData[] {
+  const stockMap = new Map<string, StockData>();
+
+  // 1. Load baseline data from nasdaqStocks.json if available
   try {
     const jsonPath = path.resolve(__dirname, 'src/data/nasdaqStocks.json');
     if (fs.existsSync(jsonPath)) {
       const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
       if (Array.isArray(raw)) {
-        return raw.map((item: any) => {
+        for (const item of raw) {
+          const sym = (item.ticker || item.symbol || '').toUpperCase();
+          if (!sym) continue;
           const price = Number(item.price || 0);
           const open = Number(item.open || item.price || 0);
-          const openPercent = calculateOpenPercent(price, open);
-
-          return {
-            symbol: item.ticker || item.symbol,
-            ticker: item.ticker || item.symbol,
-            name: item.name || item.ticker,
-            companyName: item.name || item.ticker,
+          stockMap.set(sym, {
+            symbol: sym,
+            ticker: sym,
+            name: item.name || sym,
+            companyName: item.name || sym,
             price,
             lastSale: price,
             change: Number(item.change || 0),
@@ -202,37 +253,52 @@ function loadInitialStocksFromDisk(): StockData[] {
             volume: Number(item.volume || 0),
             avgVolume: Number(item.avgVolume || item.volume || 0),
             open,
-            high: Number(item.high || item.price || 0),
-            low: Number(item.low || item.price || 0),
-            prevClose: Number(item.prevClose || item.price || 0),
-            openPercent,
-            high52: Number(item.high52w || 0),
-            fiftyTwoWeekHigh: Number(item.high52w || 0),
-            high52w: Number(item.high52w || 0),
-            low52: Number(item.low52w || 0),
-            fiftyTwoWeekLow: Number(item.low52w || 0),
-            low52w: Number(item.low52w || 0),
+            high: Number(item.high || price),
+            low: Number(item.low || price),
+            prevClose: Number(item.prevClose || price),
+            openPercent: calculateOpenPercent(price, open),
             sector: item.sector || 'Equities',
-            industry: item.industry || item.sector || 'General',
-            description: item.description || '',
-            tagColor: item.tagColor || assignTagColor(item.ticker || item.symbol),
-            isFavorite: Boolean(item.isFavorite),
-            m1Change: Number(item.m1Change || 0),
-            m5Change: Number(item.m5Change || 0),
-            m15Change: Number(item.m15Change || 0),
-            h1Change: Number(item.h1Change || 0),
-            h4Change: Number(item.h4Change || 0),
+            industry: item.industry || 'General',
             updatedAt: new Date().toISOString(),
-          };
-        });
+          });
+        }
       }
     }
   } catch (err: any) {
-    console.warn('Initial nasdaqStocks.json preload notice:', err.message);
+    console.warn('nasdaqStocks.json preload notice:', err.message);
   }
-  return [];
-}
 
+  // 2. Ensure EVERY ticker in tickets.txt exists in the cache
+  const diskTickers = loadTickersFromDisk();
+  for (const sym of diskTickers) {
+    if (!stockMap.has(sym)) {
+      stockMap.set(sym, {
+        symbol: sym,
+        ticker: sym,
+        name: sym,
+        companyName: sym,
+        price: 0,
+        lastSale: 0,
+        change: 0,
+        netChange: 0,
+        changePercent: 0,
+        pctchange: 0,
+        pChange: 0,
+        changesPercentage: 0,
+        marketCap: 0,
+        volume: 0,
+        open: 0,
+        prevClose: 0,
+        openPercent: 0,
+        sector: 'Equities',
+        industry: 'General',
+        updatedAt: new Date().toISOString(),
+      });
+    }
+  }
+
+  return Array.from(stockMap.values());
+}
 // ============================================================================
 // Real-Time Batch Data Fetcher with Crumb Authentication
 // ============================================================================
@@ -261,13 +327,19 @@ async function fetchBatchQuotes(symbols: string[], retryCount = 0): Promise<Stoc
   try {
     const res = await fetch(url, { headers });
 
-    // Handle 401 Unauthorized gracefully by refreshing the crumb session once
-    if (res.status === 401 && retryCount < 1) {
-      console.warn('[Yahoo Finance] 401 Unauthorized on batch quote, renewing session...');
-      yahooSession = null;
-      await getYahooSession(true);
-      return fetchBatchQuotes(symbols, retryCount + 1);
+    if (!res.ok) {
+      console.warn(`[Yahoo Finance] Batch request returned HTTP ${res.status}, using chart fallback for chunk...`);
+      const fallbackResults = await Promise.all(symbols.map(s => fetchSingleQuoteViaChart(s)));
+      return fallbackResults.filter((s): s is StockData => s !== null);
     }
+
+    // // Handle 401 Unauthorized gracefully by refreshing the crumb session once
+    // if (res.status === 401 && retryCount < 1) {
+    //   console.warn('[Yahoo Finance] 401 Unauthorized on batch quote, renewing session...');
+    //   yahooSession = null;
+    //   await getYahooSession(true);
+    //   return fetchBatchQuotes(symbols, retryCount + 1);
+    // }
 
     if (!res.ok) {
       console.warn(`[Yahoo Finance] Batch request returned HTTP ${res.status}`);
