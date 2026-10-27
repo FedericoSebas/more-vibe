@@ -32,6 +32,8 @@ export interface StockData {
   low?: number;
   prevClose?: number;
   openPercent?: number;
+  exchange?: string;       // <--- ADD THIS
+  market?: string;         // <--- ADD THIS
   pe?: number | null;
   peRatio?: number | null;
   high52?: number | null;
@@ -53,7 +55,6 @@ export interface StockData {
   h4Change?: number;
   updatedAt: string;
 }
-
 // Color palette for ticker tags
 const TAG_COLORS = ['#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#f59e0b', '#06b6d4', '#ec4899', '#84cc16'];
 function assignTagColor(symbol: string): string {
@@ -307,6 +308,23 @@ let lastFetchTime = 0;
 const CACHE_TTL_MS = 60 * 1000;
 let isFetching = false;
 
+function cleanExchangeName(rawExchange?: string, fullExchange?: string): string {
+  const ex = (fullExchange || rawExchange || '').toUpperCase();
+  if (ex.includes('NASDAQ') || ex.includes('NMS') || ex.includes('NGS') || ex.includes('NCM')) {
+    return 'NASDAQ';
+  }
+  if (ex.includes('NYSE') || ex.includes('NEW YORK') || ex.includes('NYQ')) {
+    return 'NYSE';
+  }
+  if (ex.includes('AMEX') || ex.includes('AMERICAN') || ex.includes('ASE')) {
+    return 'AMEX';
+  }
+  if (ex.includes('BATS') || ex.includes('ARCX') || ex.includes('ARCA')) {
+    return 'ARCA';
+  }
+  return fullExchange || rawExchange || 'US';
+}
+
 async function fetchBatchQuotes(symbols: string[], retryCount = 0): Promise<StockData[]> {
   const session = await getYahooSession();
   const symbolQuery = symbols.join(',');
@@ -361,9 +379,8 @@ async function fetchBatchQuotes(symbols: string[], retryCount = 0): Promise<Stoc
       const open = Number(item.regularMarketOpen ?? price);
       const high = Number(item.regularMarketDayHigh ?? Math.max(open, price));
       const low = Number(item.regularMarketDayLow ?? Math.min(open, price));
-
-      // Calculate Change from Open %: ((Current Price - Today's Open) / Today's Open) * 100
-      const openPercent = calculateOpenPercent(price, open);
+      const openPercent = open > 0 ? Number((((price - open) / open) * 100).toFixed(2)) : 0;
+      const exchange = cleanExchangeName(item.exchange, item.fullExchangeName);
 
       return {
         symbol: item.symbol,
@@ -386,6 +403,8 @@ async function fetchBatchQuotes(symbols: string[], retryCount = 0): Promise<Stoc
         prevClose,
         openPercent,
         marketCap,
+        exchange,       // <--- Assigned here (e.g. "NYSE", "NASDAQ", "AMEX")
+        market: exchange,
         pe: item.trailingPE || item.forwardPE || null,
         peRatio: item.trailingPE || item.forwardPE || null,
         high52: item.fiftyTwoWeekHigh ?? null,
@@ -930,6 +949,13 @@ async function startServer() {
   // Screener Endpoint: /api/stocks & /api/screener
   app.get(['/api/stocks', '/api/screener'], async (req, res) => {
     try {
+      // Exchange filter (?exchange=nyse, ?exchange=all)
+      const exchangeFilter = (req.query.exchange || req.query.market || '').toString().trim().toUpperCase();
+      if (exchangeFilter && exchangeFilter !== 'ALL') {
+        stocks = stocks.filter((s) => (s.exchange || '').toUpperCase() === exchangeFilter);
+      }
+
+
       const forceRefresh = req.query.refresh === 'true';
       let stocks = await getRealTimeStocks(forceRefresh);
 
