@@ -61,7 +61,7 @@ export function generateCandleFootprint(
   candle: Candle,
   level2Context?: Level2Book | null,
   imbalanceRatio = 4.0,
-  imbalanceMode: 'level' | 'diagonal' = 'level',
+  imbalanceMode: 'level' | 'diagonal' = 'diagonal',
   minVolumeThreshold = 10
 ): CandleFootprint {
   const { open, high, low, close, volume } = candle;

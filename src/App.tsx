@@ -73,7 +73,7 @@ export default function App() {
   const [footprintFilter, setFootprintFilter] = useState<FootprintFilterConfig>({
     highlightImbalances: true,
     imbalanceRatio: 4.0,
-    imbalanceMode: 'level',
+    imbalanceMode: 'diagonal',
     minVolumeThreshold: 10,
     showRatioBadge: true,
     showStackedImbalances: true,

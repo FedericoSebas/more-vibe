@@ -144,7 +144,7 @@ export const StockChart: React.FC<StockChartProps> = ({
     return footprintFilter || {
       highlightImbalances: true,
       imbalanceRatio: 4.0,
-      imbalanceMode: 'level' as const,
+      imbalanceMode: 'diagonal' as const,
       minVolumeThreshold: 10,
       showRatioBadge: true,
       showStackedImbalances: true,
