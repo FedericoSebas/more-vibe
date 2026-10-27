@@ -422,26 +422,8 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
                   } ${tickStatus === 'up' ? 'flash-up' : tickStatus === 'down' ? 'flash-down' : ''}`}
                 >
                   {/* Tck */}
-                  <td className="px-2.5 py-1 font-mono font-bold text-[12px] whitespace-nowrap text-left">
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-[#38bdf8]">{stock.ticker}</span>
-                      {stock.exchange && (
-                        <span
-                          className={`text-[9px] px-1 py-0.2 rounded font-mono font-semibold ${
-                            stock.exchange.toUpperCase() === 'NYSE'
-                              ? 'bg-blue-950/80 text-blue-300 border border-blue-800/60'
-                              : stock.exchange.toUpperCase() === 'AMEX'
-                              ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
-                              : stock.exchange.toUpperCase() === 'ARCA'
-                              ? 'bg-purple-950/80 text-purple-300 border border-purple-800/60'
-                              : 'bg-[#152030] text-sky-400 border border-[#20314a]'
-                          }`}
-                          title={`Market: ${stock.exchange}`}
-                        >
-                          {stock.exchange}
-                        </span>
-                      )}
-                    </div>
+                  <td className="px-2.5 py-1 font-mono font-bold text-[12px] text-[#38bdf8] whitespace-nowrap text-left">
+                    {stock.ticker}
                   </td>
 
                   {/* Vol */}
