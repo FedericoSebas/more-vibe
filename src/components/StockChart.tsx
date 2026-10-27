@@ -938,12 +938,12 @@ export const StockChart: React.FC<StockChartProps> = ({
           const rightX = x + halfFpW;
           const candleSpanH = Math.max(4, lowY - highY);
 
-          // Subtle dark container background for footprint candle
-          ctx.fillStyle = isUp ? 'rgba(7, 20, 18, 0.92)' : 'rgba(24, 9, 12, 0.92)';
+          // Subtle dark container background for footprint wicks
+          ctx.fillStyle = isUp ? 'rgba(8, 16, 22, 0.92)' : 'rgba(20, 10, 15, 0.92)';
           ctx.fillRect(leftX, highY, fpWidth, candleSpanH);
 
-          // Subtle body tint to distinguish candle body from wicks
-          ctx.fillStyle = isUp ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)';
+          // Distinct body background color to clearly differentiate candle body from upper/lower wicks without any border
+          ctx.fillStyle = isUp ? 'rgba(34, 197, 94, 0.22)' : 'rgba(239, 68, 68, 0.22)';
           ctx.fillRect(leftX, candleTop, fpWidth, candleHeight);
 
           // Draw Open Notch on Left, Close Notch on Right
@@ -1101,10 +1101,8 @@ export const StockChart: React.FC<StockChartProps> = ({
           ctx.lineTo(x, lowY);
           ctx.stroke();
 
-          // Candle Body Border: strictly drawn around the real body, leaving wicks clean without any border
-          ctx.strokeStyle = candleColor;
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(leftX, candleTop, fpWidth, candleHeight);
+          // Footprint candle body border removed per user request:
+          // Body is borderless and differentiated from the wick by its distinct background color fill.
 
           // Render Stacked Imbalance Brackets on Footprint Candle
           if (isStackedEnabled) {
@@ -1140,23 +1138,7 @@ export const StockChart: React.FC<StockChartProps> = ({
             }
           }
 
-          // Delta Summary Badge below the candle
-          const isPositiveDelta = fp.totalDelta >= 0;
-          const deltaText = `Δ ${isPositiveDelta ? '+' : ''}${formatOrderFlowVolume(fp.totalDelta)}`;
-          const deltaBadgeY = Math.min(pricePlotHeight - 14, lowY + 12);
-          const badgeW = Math.min(fpWidth, 42);
 
-          ctx.fillStyle = isPositiveDelta ? 'rgba(34, 197, 94, 0.25)' : 'rgba(239, 68, 68, 0.25)';
-          ctx.fillRect(x - badgeW / 2, deltaBadgeY - 6, badgeW, 12);
-          ctx.strokeStyle = isPositiveDelta ? 'rgba(34, 197, 94, 0.7)' : 'rgba(239, 68, 68, 0.7)';
-          ctx.lineWidth = 0.8;
-          ctx.strokeRect(x - badgeW / 2, deltaBadgeY - 6, badgeW, 12);
-
-          ctx.font = 'bold 8px "JetBrains Mono", monospace';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillStyle = isPositiveDelta ? '#4ade80' : '#f87171';
-          ctx.fillText(deltaText, x, deltaBadgeY);
         } else {
           // Standard Candlestick rendering
           // Draw Wick
