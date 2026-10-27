@@ -65,6 +65,13 @@ function assignTagColor(symbol: string): string {
   return TAG_COLORS[Math.abs(hash) % TAG_COLORS.length];
 }
 
+// Helper: Calculate Change from Open %: ((Current Price - Today's Open) / Today's Open) * 100
+function calculateOpenPercent(currentPrice: number, todayOpen: number): number {
+  if (!todayOpen || todayOpen <= 0) return 0;
+  const pct = ((currentPrice - todayOpen) / todayOpen) * 100;
+  return Number(pct.toFixed(2));
+}
+
 // ============================================================================
 // Yahoo Finance Authentication & Session Management (Cookie + Crumb)
 // ============================================================================
@@ -173,45 +180,51 @@ function loadInitialStocksFromDisk(): StockData[] {
     if (fs.existsSync(jsonPath)) {
       const raw = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'));
       if (Array.isArray(raw)) {
-        return raw.map((item: any) => ({
-          symbol: item.ticker || item.symbol,
-          ticker: item.ticker || item.symbol,
-          name: item.name || item.ticker,
-          companyName: item.name || item.ticker,
-          price: Number(item.price || 0),
-          lastSale: Number(item.price || 0),
-          change: Number(item.change || 0),
-          netChange: Number(item.change || 0),
-          changePercent: Number(item.changePercent || 0),
-          pctchange: Number(item.changePercent || 0),
-          pChange: Number(item.changePercent || 0),
-          changesPercentage: Number(item.changePercent || 0),
-          marketCap: item.marketCap || '0M',
-          volume: Number(item.volume || 0),
-          avgVolume: Number(item.avgVolume || item.volume || 0),
-          open: Number(item.open || item.price || 0),
-          high: Number(item.high || item.price || 0),
-          low: Number(item.low || item.price || 0),
-          prevClose: Number(item.prevClose || item.price || 0),
-          openPercent: Number(item.openPercent || 0),
-          high52: Number(item.high52w || 0),
-          fiftyTwoWeekHigh: Number(item.high52w || 0),
-          high52w: Number(item.high52w || 0),
-          low52: Number(item.low52w || 0),
-          fiftyTwoWeekLow: Number(item.low52w || 0),
-          low52w: Number(item.low52w || 0),
-          sector: item.sector || 'Equities',
-          industry: item.industry || item.sector || 'General',
-          description: item.description || '',
-          tagColor: item.tagColor || assignTagColor(item.ticker || item.symbol),
-          isFavorite: Boolean(item.isFavorite),
-          m1Change: Number(item.m1Change || 0),
-          m5Change: Number(item.m5Change || 0),
-          m15Change: Number(item.m15Change || 0),
-          h1Change: Number(item.h1Change || 0),
-          h4Change: Number(item.h4Change || 0),
-          updatedAt: new Date().toISOString(),
-        }));
+        return raw.map((item: any) => {
+          const price = Number(item.price || 0);
+          const open = Number(item.open || item.price || 0);
+          const openPercent = calculateOpenPercent(price, open);
+
+          return {
+            symbol: item.ticker || item.symbol,
+            ticker: item.ticker || item.symbol,
+            name: item.name || item.ticker,
+            companyName: item.name || item.ticker,
+            price,
+            lastSale: price,
+            change: Number(item.change || 0),
+            netChange: Number(item.change || 0),
+            changePercent: Number(item.changePercent || 0),
+            pctchange: Number(item.changePercent || 0),
+            pChange: Number(item.changePercent || 0),
+            changesPercentage: Number(item.changePercent || 0),
+            marketCap: item.marketCap || '0M',
+            volume: Number(item.volume || 0),
+            avgVolume: Number(item.avgVolume || item.volume || 0),
+            open,
+            high: Number(item.high || item.price || 0),
+            low: Number(item.low || item.price || 0),
+            prevClose: Number(item.prevClose || item.price || 0),
+            openPercent,
+            high52: Number(item.high52w || 0),
+            fiftyTwoWeekHigh: Number(item.high52w || 0),
+            high52w: Number(item.high52w || 0),
+            low52: Number(item.low52w || 0),
+            fiftyTwoWeekLow: Number(item.low52w || 0),
+            low52w: Number(item.low52w || 0),
+            sector: item.sector || 'Equities',
+            industry: item.industry || item.sector || 'General',
+            description: item.description || '',
+            tagColor: item.tagColor || assignTagColor(item.ticker || item.symbol),
+            isFavorite: Boolean(item.isFavorite),
+            m1Change: Number(item.m1Change || 0),
+            m5Change: Number(item.m5Change || 0),
+            m15Change: Number(item.m15Change || 0),
+            h1Change: Number(item.h1Change || 0),
+            h4Change: Number(item.h4Change || 0),
+            updatedAt: new Date().toISOString(),
+          };
+        });
       }
     }
   } catch (err: any) {
@@ -276,7 +289,9 @@ async function fetchBatchQuotes(symbols: string[], retryCount = 0): Promise<Stoc
       const open = Number(item.regularMarketOpen ?? price);
       const high = Number(item.regularMarketDayHigh ?? Math.max(open, price));
       const low = Number(item.regularMarketDayLow ?? Math.min(open, price));
-      const openPercent = prevClose ? Number((((open - prevClose) / prevClose) * 100).toFixed(2)) : 0;
+
+      // Calculate Change from Open %: ((Current Price - Today's Open) / Today's Open) * 100
+      const openPercent = calculateOpenPercent(price, open);
 
       return {
         symbol: item.symbol,
@@ -328,7 +343,6 @@ async function fetchBatchQuotes(symbols: string[], retryCount = 0): Promise<Stoc
 
 async function fetchAllTicketsLive(): Promise<StockData[]> {
   const tickers = loadTickersFromDisk();
-  // Fetch high-priority focus symbols first
   const BATCH_SIZE = 40;
   const chunks = chunkArray(tickers, BATCH_SIZE);
   const allResults: StockData[] = [];
@@ -367,7 +381,6 @@ async function getRealTimeStocks(forceRefresh = false): Promise<StockData[]> {
   try {
     const fresh = await fetchAllTicketsLive();
     if (fresh.length > 0) {
-      // Merge fresh live quotes into cachedStocks
       const freshMap = new Map(fresh.map((s) => [s.symbol, s]));
       const updatedList: StockData[] = [];
 
@@ -456,7 +469,6 @@ function build24HourWindow(
   const startTime = now - 24 * 60 * 60 * 1000;
   const stepMs = stepMinutes * 60 * 1000;
 
-  // Filter raw candles that fall strictly within the last 24h window
   let windowBars = (rawCandles || []).filter(
     (c) => c.time >= startTime - stepMs && c.time <= now + 60000
   );
@@ -490,7 +502,6 @@ function build24HourWindow(
       p = close;
     }
   } else {
-    // 1. Fill prefix gap from startTime to first candle
     if (windowBars[0].time > startTime + stepMs) {
       const prefixCount = Math.floor((windowBars[0].time - startTime) / stepMs);
       const prefix: any[] = [];
@@ -517,7 +528,6 @@ function build24HourWindow(
       windowBars = [...prefix, ...windowBars];
     }
 
-    // 2. Fill suffix gap up to current moment (now) with recent price and time
     const lastBar = windowBars[windowBars.length - 1];
     if (lastBar.time < now - stepMs) {
       const suffixCount = Math.max(1, Math.floor((now - lastBar.time) / stepMs));
@@ -545,7 +555,6 @@ function build24HourWindow(
     }
   }
 
-  // Ensure all candles have correct sessions and formatted time string
   return windowBars.map((b) => {
     const et = getEasternTimeParts(b.time);
     return {
@@ -555,7 +564,6 @@ function build24HourWindow(
     };
   });
 }
-
 
 async function fetchYahooChart(
   symbol: string,
@@ -715,13 +723,14 @@ async function fetchYahooChart(
 
   const prevClose = meta.chartPreviousClose || meta.previousClose || meta.regularMarketPrice || 0;
   const currentPrice = meta.regularMarketPrice || (candles.length > 0 ? candles[candles.length - 1].close : 0);
+  const openPrice = meta.regularMarketOpen || (candles[0]?.open ?? currentPrice);
   const change = meta.regularMarketPrice && prevClose ? meta.regularMarketPrice - prevClose : 0;
   const changePercent = prevClose ? (change / prevClose) * 100 : 0;
+  const openPercent = calculateOpenPercent(currentPrice, openPrice);
 
   const stepMinutes =
     tf === '1M' ? 1 : tf === '10M' ? 10 : tf === '1H' ? 60 : tf === '4H' ? 240 : tf === 'D' || tf === '1D' ? 1440 : 5;
 
-  // 1D range: strictly 24 hours of continuous data up to the current real-time moment
   if (range === '1d' || rangeKey === '1d') {
     candles = build24HourWindow(candles, currentPrice, prevClose, stepMinutes);
   }
@@ -736,8 +745,9 @@ async function fetchYahooChart(
       price: Math.round(currentPrice * 10000) / 10000,
       change: Math.round(change * 10000) / 10000,
       changePercent: Number(changePercent.toFixed(2)),
+      openPercent,
       prevClose: Math.round(prevClose * 10000) / 10000,
-      open: Math.round((meta.regularMarketOpen || (candles[0]?.open ?? currentPrice)) * 10000) / 10000,
+      open: Math.round(openPrice * 10000) / 10000,
       high: Math.round((meta.regularMarketDayHigh || meta.dayHigh || currentPrice) * 10000) / 10000,
       low: Math.round((meta.regularMarketDayLow || meta.dayLow || currentPrice) * 10000) / 10000,
       volume: meta.regularMarketVolume || meta.dayVolume || candles.reduce((acc, c) => acc + c.volume, 0),
@@ -755,8 +765,10 @@ function generateFallbackCandles(ticker: string, timeframe: string, rangeKey = '
   const stock = cachedStocks.find((s) => s.symbol === ticker || s.ticker === ticker);
   const currentPrice = stock ? stock.price : 10.0;
   const prevClose = stock ? Number(stock.prevClose || currentPrice) : 10.0;
+  const openPrice = stock ? Number(stock.open || prevClose) : prevClose;
   const change = stock ? stock.change : 0.5;
   const changePercent = stock ? stock.changePercent : 5.0;
+  const openPercent = calculateOpenPercent(currentPrice, openPrice);
 
   const stepMinutes =
     timeframe === '1M' ? 1 : timeframe === '10M' ? 10 : timeframe === '1H' ? 60 : timeframe === '4H' ? 240 : 5;
@@ -805,8 +817,9 @@ function generateFallbackCandles(ticker: string, timeframe: string, rangeKey = '
       price: currentPrice,
       change,
       changePercent,
+      openPercent,
       prevClose,
-      open: stock?.open || prevClose,
+      open: openPrice,
       high: stock?.high || currentPrice,
       low: stock?.low || currentPrice,
       volume: stock?.volume || 1000000,
@@ -816,7 +829,6 @@ function generateFallbackCandles(ticker: string, timeframe: string, rangeKey = '
     candles,
   };
 }
-
 
 // ============================================================================
 // Server Initialization
@@ -869,6 +881,16 @@ async function startServer() {
       if (!isNaN(minPrice)) stocks = stocks.filter((s) => s.price >= minPrice);
       if (!isNaN(maxPrice)) stocks = stocks.filter((s) => s.price <= maxPrice);
 
+      // Open % filter: ((current price - today's open) / today's open) * 100
+      const minOpenPercent = parseFloat((req.query.minOpenPercent || req.query.minOpenPct) as string);
+      const maxOpenPercent = parseFloat((req.query.maxOpenPercent || req.query.maxOpenPct) as string);
+      if (!isNaN(minOpenPercent)) {
+        stocks = stocks.filter((s) => (s.openPercent ?? 0) >= minOpenPercent);
+      }
+      if (!isNaN(maxOpenPercent)) {
+        stocks = stocks.filter((s) => (s.openPercent ?? 0) <= maxOpenPercent);
+      }
+
       // Market Cap filters
       const minMarketCap = parseFloat(req.query.minMarketCap as string);
       const maxMarketCap = parseFloat(req.query.maxMarketCap as string);
@@ -886,15 +908,16 @@ async function startServer() {
         stocks = stocks.filter((s) => s.change < 0);
       }
 
-      // Sorting (?sortBy=price&sortOrder=desc)
+      // Sorting (?sortBy=openPercent&sortOrder=desc)
       const sortBy = (req.query.sortBy || req.query.sort || '').toString().toLowerCase();
       const sortOrder = (req.query.sortOrder || req.query.order || 'desc').toString().toLowerCase();
       const isAsc = sortOrder === 'asc';
 
       if (sortBy) {
         stocks = [...stocks].sort((a, b) => {
-          const valA: any = (a as any)[sortBy] ?? (a as any)[sortBy === 'ticker' ? 'symbol' : sortBy];
-          const valB: any = (b as any)[sortBy] ?? (b as any)[sortBy === 'ticker' ? 'symbol' : sortBy];
+          const key = sortBy === 'ticker' ? 'symbol' : sortBy;
+          const valA: any = (a as any)[key];
+          const valB: any = (b as any)[key];
 
           if (valA == null) return 1;
           if (valB == null) return -1;
