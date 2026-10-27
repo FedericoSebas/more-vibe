@@ -119,16 +119,17 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
   const renderHeaderCol = (col: SortColumn, label: string, align: 'left' | 'right' = 'right') => {
     const isActive = sortCol === col;
     return (
-      <div 
+      <th 
+        key={col}
         onClick={() => handleSort(col)}
-        className={`cursor-pointer hover:text-white transition-colors flex items-center select-none ${
-          align === 'right' ? 'justify-end text-right' : 'justify-start text-left'
+        className={`sticky top-0 z-10 bg-[#0e131d] border-b border-[#1b2333] px-2.5 py-1.5 cursor-pointer hover:text-white transition-colors select-none whitespace-nowrap font-medium text-[11px] ${
+          align === 'right' ? 'text-right' : 'text-left'
         }`}
       >
         <span className={`inline-block pb-0.5 whitespace-nowrap ${isActive ? 'border-b-2 border-white text-white font-bold' : 'text-slate-400 font-medium'}`}>
           {label}
         </span>
-      </div>
+      </th>
     );
   };
 
@@ -280,94 +281,97 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
         )}
       </div>
 
-      {/* Table Container */}
-      <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
-        {/* Table Header Row */}
-        <div className="grid grid-cols-[46px_1fr_42px_42px_44px_40px_40px_52px_56px] gap-1 px-2.5 py-1.5 bg-[#0e131d] border-b border-[#1b2333] text-[11px] font-medium text-slate-400 shrink-0 select-none">
-          {renderHeaderCol('ticker', 'Tck', 'left')}
-          {renderHeaderCol('volume', 'Vol', 'right')}
-          {renderHeaderCol('m1Change', '1 Min', 'right')}
-          {renderHeaderCol('m5Change', '5 Min', 'right')}
-          {renderHeaderCol('m15Change', '15 Min', 'right')}
-          {renderHeaderCol('h1Change', '1 Hr', 'right')}
-          {renderHeaderCol('h4Change', '4 Hr', 'right')}
-          {renderHeaderCol('changePercent', 'Chng', 'right')}
-          {renderHeaderCol('openPercent', 'Open %', 'right')}
-        </div>
+      {/* Table Container - Column width relative to cell with the most width */}
+      <div className="flex-1 min-h-0 overflow-auto">
+        <table className="w-full table-auto border-collapse text-[11px] select-none">
+          <thead>
+            <tr>
+              {renderHeaderCol('ticker', 'Tck', 'left')}
+              {renderHeaderCol('volume', 'Vol', 'right')}
+              {renderHeaderCol('m1Change', '1 Min', 'right')}
+              {renderHeaderCol('m5Change', '5 Min', 'right')}
+              {renderHeaderCol('m15Change', '15 Min', 'right')}
+              {renderHeaderCol('h1Change', '1 Hr', 'right')}
+              {renderHeaderCol('h4Change', '4 Hr', 'right')}
+              {renderHeaderCol('changePercent', 'Chng', 'right')}
+              {renderHeaderCol('openPercent', 'Open %', 'right')}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#131b27]/60">
+            {pageStocks.map((stock) => {
+              const isSelected = stock.ticker === selectedTicker;
+              const tickStatus = updatedTickers[stock.ticker];
 
-        {/* Table Rows Body */}
-        <div className="flex-1 overflow-y-auto divide-y divide-[#131b27]/60">
-          {pageStocks.map((stock) => {
-            const isSelected = stock.ticker === selectedTicker;
-            const tickStatus = updatedTickers[stock.ticker];
+              return (
+                <tr
+                  key={stock.ticker}
+                  onClick={() => {
+                    onSelectStock(stock);
+                    soundManager.playSelect();
+                  }}
+                  className={`cursor-pointer transition-colors ${
+                    isSelected 
+                      ? 'bg-[#1b2d47] text-white' 
+                      : 'hover:bg-[#121925] text-slate-300'
+                  } ${tickStatus === 'up' ? 'flash-up' : tickStatus === 'down' ? 'flash-down' : ''}`}
+                >
+                  {/* Tck */}
+                  <td className="px-2.5 py-1 font-mono font-bold text-[12px] text-[#38bdf8] whitespace-nowrap text-left">
+                    {stock.ticker}
+                  </td>
 
-            return (
-              <div
-                key={stock.ticker}
-                onClick={() => {
-                  onSelectStock(stock);
-                  soundManager.playSelect();
-                }}
-                className={`grid grid-cols-[46px_1fr_42px_42px_44px_40px_40px_52px_56px] gap-1 px-2.5 py-1 items-center cursor-pointer transition-colors ${
-                  isSelected 
-                    ? 'bg-[#1b2d47] text-white' 
-                    : 'hover:bg-[#121925] text-slate-300'
-                } ${tickStatus === 'up' ? 'flash-up' : tickStatus === 'down' ? 'flash-down' : ''}`}
-              >
-                {/* Tck */}
-                <div className="font-mono font-bold text-[12px] text-[#38bdf8] truncate">
-                  {stock.ticker}
-                </div>
+                  {/* Vol */}
+                  <td className="px-2.5 py-1 text-right font-mono text-[11px] text-slate-200 whitespace-nowrap">
+                    {(stock.volume || 0).toLocaleString()}
+                  </td>
 
-                {/* Vol */}
-                <div className="text-right font-mono text-[11px] text-slate-200 truncate">
-                  {(stock.volume || 0).toLocaleString()}
-                </div>
+                  {/* 1 Min */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.m1Change)}
+                  </td>
 
-                {/* 1 Min */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.m1Change)}
-                </div>
+                  {/* 5 Min */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.m5Change)}
+                  </td>
 
-                {/* 5 Min */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.m5Change)}
-                </div>
+                  {/* 15 Min */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.m15Change)}
+                  </td>
 
-                {/* 15 Min */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.m15Change)}
-                </div>
+                  {/* 1 Hr */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.h1Change)}
+                  </td>
 
-                {/* 1 Hr */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.h1Change)}
-                </div>
+                  {/* 4 Hr */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.h4Change)}
+                  </td>
 
-                {/* 4 Hr */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.h4Change)}
-                </div>
+                  {/* Chng */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.changePercent)}
+                  </td>
 
-                {/* Chng */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.changePercent)}
-                </div>
+                  {/* Open % */}
+                  <td className="px-2.5 py-1 text-right whitespace-nowrap">
+                    {renderPctCell(stock.openPercent)}
+                  </td>
+                </tr>
+              );
+            })}
 
-                {/* Open % */}
-                <div className="text-right truncate">
-                  {renderPctCell(stock.openPercent)}
-                </div>
-              </div>
-            );
-          })}
-
-          {pageStocks.length === 0 && (
-            <div className="p-8 text-center text-slate-500 text-xs">
-              No tickers match your current search or category filter.
-            </div>
-          )}
-        </div>
+            {pageStocks.length === 0 && (
+              <tr>
+                <td colSpan={9} className="p-8 text-center text-slate-500 text-xs">
+                  No tickers match your current search or category filter.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
       {/* Pagination Footer */}

@@ -626,42 +626,64 @@ export const StockChart: React.FC<StockChartProps> = ({
     }
 
     // 2.5 Draw Extended Hours Session Shading & Clean Session Boundary Dividers
-    // 24-Hour Market Colors: Pre-market (Orange), After-market (Blue), Overnight (Purple) with opacity >= 8% (0.12)
-    const hasExtendedSessions = visibleCandles.some(c => c.session && c.session !== 'regular');
+    // 24-Hour Market Colors: Pre-market (Orange), After-market (Blue), Overnight (Purple)
+    const hasExtendedSessions = visibleCandles.some(c => (c.session || getEasternTimeParts(c.time).session) !== 'regular');
     if (hasExtendedSessions) {
       for (let i = 0; i < visibleCandles.length; i++) {
         const c = visibleCandles[i];
+        const session = c.session || getEasternTimeParts(c.time).session;
         const x = indexToX(i);
         const halfW = candleWidth / 2;
 
-        if (c.session === 'pre') {
-          // Pre-Market (4:00 AM - 9:30 AM ET): Orange background (at least 8% opacity)
-          ctx.fillStyle = 'rgba(249, 115, 22, 0.12)';
+        if (session === 'pre') {
+          // Pre-Market (4:00 AM - 9:30 AM ET): Amber/Orange background
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.16)';
           ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
-        } else if (c.session === 'post') {
-          // After-Market (4:00 PM - 8:00 PM ET): Blue background (at least 8% opacity)
-          ctx.fillStyle = 'rgba(59, 130, 246, 0.12)';
+        } else if (session === 'post') {
+          // After-Market (4:00 PM - 8:00 PM ET): Blue background
+          ctx.fillStyle = 'rgba(59, 130, 246, 0.16)';
           ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
-        } else if (c.session === 'overnight') {
-          // Overnight / Night Market (8:00 PM - 4:00 AM ET): Purple background (at least 8% opacity)
-          ctx.fillStyle = 'rgba(168, 85, 247, 0.12)';
+        } else if (session === 'overnight') {
+          // Overnight / Night Market (8:00 PM - 4:00 AM ET): Purple background
+          ctx.fillStyle = 'rgba(168, 85, 247, 0.10)';
           ctx.fillRect(x - halfW, 0, candleWidth, plotHeight);
         }
 
-        // Clean session transition boundary line
-        if (i > 0) {
-          const prev = visibleCandles[i - 1];
-          if (prev.session !== c.session) {
-            const boundaryX = x - halfW;
+        // Clean session transition boundary line & Top Session Tag
+        const prevSession = i > 0 ? (visibleCandles[i - 1].session || getEasternTimeParts(visibleCandles[i - 1].time).session) : null;
+        if (i === 0 || prevSession !== session) {
+          const boundaryX = x - halfW;
+          if (i > 0) {
             ctx.beginPath();
             ctx.lineWidth = 1;
-            ctx.setLineDash([3, 3]);
-            ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+            ctx.setLineDash([4, 4]);
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
             ctx.moveTo(boundaryX, 0);
             ctx.lineTo(boundaryX, plotHeight);
             ctx.stroke();
             ctx.setLineDash([]);
           }
+
+          // Top session tag label
+          const label = session === 'pre' 
+            ? 'PRE-MKT (04:00)' 
+            : session === 'post' 
+            ? 'POST-MKT (16:00)' 
+            : session === 'overnight' 
+            ? 'OVERNIGHT (20:00)' 
+            : 'REGULAR (09:30)';
+          const color = session === 'pre' 
+            ? '#fb923c' 
+            : session === 'post' 
+            ? '#60a5fa' 
+            : session === 'overnight' 
+            ? '#c084fc' 
+            : '#4ade80';
+
+          ctx.fillStyle = color;
+          ctx.font = 'bold 9px "JetBrains Mono", monospace';
+          ctx.textAlign = 'left';
+          ctx.fillText(label, Math.max(4, boundaryX + 4), 14);
         }
       }
     }

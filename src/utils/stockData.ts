@@ -475,9 +475,7 @@ export function generateCandlesForStock(
     barCount = Math.min(1000, Math.max(10, Math.round((diffDays * 1440) / intervalMinutes)));
   }
 
-  // Intraday 1D session: rolling 24-hour continuous market (trailing 1440 minutes)
-  // Contains the newest session of Monday Oct 26 ending at the current live time,
-  // preceded by the latest session of Friday Oct 23, with earlier Friday sessions removed.
+  // Intraday 1D session: exactly 24-hour continuous market (trailing 1440 minutes up to current real-time)
   if (rangeKey === '1d' || (!rangeKey && (timeframe === '1M' || timeframe === '5M' || timeframe === '10M'))) {
     const stepMinutes = 
       timeframe === '1M' ? 1 : 
@@ -486,102 +484,30 @@ export function generateCandlesForStock(
       timeframe === '4H' ? 240 : 
       timeframe === 'D' ? 1440 : 5;
     const stepMs = stepMinutes * 60 * 1000;
-    const total1DBars = Math.max(1, Math.floor(960 / stepMinutes));
+    const total1DBars = Math.max(1, Math.floor((24 * 60) / stepMinutes));
     const now = Date.now();
+    const startTime = now - 24 * 60 * 60 * 1000;
 
-    const mondayAnchorMs = Date.UTC(2026, 9, 26, 0, 0, 0); // Sunday Oct 25 20:00 EDT = Mon 00:00 UTC
-    const mondayMinutesElapsed = Math.max(stepMinutes, Math.floor((now - mondayAnchorMs) / (60 * 1000)));
-    const mondayBarsCount = Math.min(total1DBars, Math.max(1, Math.floor(mondayMinutesElapsed / stepMinutes)));
-    const fridayBarsNeeded = Math.max(0, total1DBars - mondayBarsCount);
+    const startPrice = stock.prevClose || (stock.price * (1 - (stock.changePercent / 100) * 0.85));
+    const targetPrice = stock.price;
+    let price = startPrice;
 
-    // 1. Prior market day (Friday Oct 23) latest session: earlier sessions removed, latest session kept
-    const fridayCloseMs = Date.UTC(2026, 9, 24, 0, 0, 0); // Friday Oct 23 20:00 EDT = Sat 00:00 UTC
-    const fridayStartMs = fridayCloseMs - fridayBarsNeeded * stepMs;
-    const fridayTargetClose = stock.prevClose || (stock.price * (1 - (stock.changePercent / 100) * 0.85));
-    const fridayStartPrice = fridayTargetClose * 0.96;
-    let price = fridayStartPrice;
-
-    for (let i = 0; i < fridayBarsNeeded; i++) {
-      const barTime = fridayStartMs + i * stepMs;
+    for (let i = 0; i < total1DBars; i++) {
+      const barTime = startTime + i * stepMs;
       const et = getEasternTimeParts(barTime);
       const open = price;
-      const progress = i / fridayBarsNeeded;
-      const target = fridayTargetClose;
-      const diff = (target - price) / price;
-      const changePct = diff * 0.15 + (Math.random() - 0.49) * 0.01;
+      const progress = (i + 1) / total1DBars;
+      const expected = startPrice + progress * (targetPrice - startPrice);
+      const diff = (expected - price) / (price || 1);
+      const changePct = diff * 0.16 + (Math.random() - 0.49) * 0.012;
       let close = Math.max(0.0001, Math.round(open * (1 + changePct) * 10000) / 10000);
-      if (i === fridayBarsNeeded - 1) close = fridayTargetClose;
-      const volatility = Math.abs(close - open) * (1.1 + Math.random() * 1.3) + (open * 0.0008);
-      const high = Math.round((Math.max(open, close) + Math.random() * volatility) * 10000) / 10000;
-      const low = Math.round((Math.min(open, close) - Math.random() * volatility) * 10000) / 10000;
-      const volume = Math.floor((stock.volume / (total1DBars * 2)) * (0.3 + Math.random() * 1.2));
-
-      candles.push({
-        time: barTime,
-        timeStr: et.timeStr,
-        open: Math.round(open * 10000) / 10000,
-        high: Math.max(open, close, high),
-        low: Math.max(0.0001, Math.min(open, close, low)),
-        close,
-        volume,
-        session: et.session
-      });
-      price = close;
-    }
-
-    // 2. Recent market day (Monday Oct 26) newest sessions (Overnight + Pre-Market up to current time)
-    const mondayStartPrice = stock.open || stock.prevClose || price;
-    price = mondayStartPrice;
-
-    for (let j = 0; j < mondayBarsCount; j++) {
-      const barTime = mondayAnchorMs + j * stepMs;
-      const et = getEasternTimeParts(barTime);
-      const open = price;
-      const progress = j / mondayBarsCount;
-      const minuteOffset = j * stepMinutes;
-
-      let changePct = 0;
-      let volume = 1500;
-
-      if (stock.ticker === 'AIOK') {
-        // High-fidelity curve for AIOK from prevClose 12.02 to current 14.25
-        if (minuteOffset < 480) {
-          // Overnight (20:00 - 04:00 ET): base around 12.02 - 12.40
-          const targetPrice = 12.02 + (progress * 0.35);
-          const diff = (targetPrice - price) / price;
-          changePct = diff * 0.2 + (Math.random() - 0.49) * 0.005;
-          volume = Math.floor(1200 + Math.random() * 3000);
-        } else {
-          // Pre-Market (04:00 ET - now): Strong rally reaching 14.25 (High of Day 15.80)
-          const targetPrice = stock.price;
-          const diff = (targetPrice - price) / price;
-          changePct = diff * 0.25 + (Math.random() - 0.48) * 0.015;
-          volume = Math.floor(80000 + Math.random() * 120000);
-        }
-      } else {
-        const targetClose = stock.price;
-        const expectedPrice = mondayStartPrice + progress * (targetClose - mondayStartPrice);
-        const diff = (expectedPrice - price) / price;
-        changePct = diff * 0.16 + (Math.random() - 0.49) * 0.014;
-        volume = Math.floor((stock.volume / total1DBars) * (0.4 + Math.random() * 1.4));
-      }
-
-      let close = Math.max(0.0001, Math.round(open * (1 + changePct) * 10000) / 10000);
-      if (j === mondayBarsCount - 1) {
+      if (i === total1DBars - 1) {
         close = Math.round(stock.price * 10000) / 10000;
       }
-
       const volatility = Math.abs(close - open) * (1.1 + Math.random() * 1.4) + (open * 0.0008);
-      let high = Math.round((Math.max(open, close) + Math.random() * volatility) * 10000) / 10000;
-      let low = Math.round((Math.min(open, close) - Math.random() * volatility) * 10000) / 10000;
-
-      if (stock.ticker === 'AIOK') {
-        if (j === mondayBarsCount - 1) {
-          close = 14.2500;
-        }
-        high = Math.max(high, close);
-        low = Math.min(low, close);
-      }
+      const high = Math.round((Math.max(open, close) + Math.random() * volatility) * 10000) / 10000;
+      const low = Math.round((Math.min(open, close) - Math.random() * volatility) * 10000) / 10000;
+      const volume = Math.floor((stock.volume / total1DBars) * (0.4 + Math.random() * 1.4));
 
       candles.push({
         time: barTime,
