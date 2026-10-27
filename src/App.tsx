@@ -54,8 +54,21 @@ export default function App() {
     volumeProfile: true,
     macd: true,
     barStats: true,
-    stackedImbalances: true
+    stackedImbalances: true,
+    candleOverview: true
   });
+
+  // Toast notification for hotkey actions (e.g. candlestick label overview toggle)
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setToastMessage(msg);
+    toastTimeoutRef.current = setTimeout(() => {
+      setToastMessage(null);
+    }, 1800);
+  }, []);
 
   // Drawing tools
   const [activeTool, setActiveTool] = useState<DrawingTool>('crosshair');
@@ -96,7 +109,9 @@ export default function App() {
   const [isOverviewOpen, setIsOverviewOpen] = useState<boolean>(false);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState<boolean>(false);
 
-  // Keyboard shortcut: Shift+S to toggle Screener visibility
+  // Keyboard shortcuts:
+  // - Shift+S: Toggle Screener visibility
+  // - \: Toggle Candlestick Label Overview (OHLC bar metrics & on-chart labels)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
@@ -107,10 +122,20 @@ export default function App() {
         setIsScreenerOpen(prev => !prev);
         soundManager.playSelect();
       }
+      // Hotkey \ to toggle Candlestick Label Overview
+      if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === '\\' || e.code === 'Backslash')) {
+        e.preventDefault();
+        setIndicators(prev => {
+          const nextVal = prev.candleOverview === false;
+          showToast(nextVal ? 'Candlestick Label Overview: Shown (\\)' : 'Candlestick Label Overview: Hidden (\\)');
+          return { ...prev, candleOverview: nextVal };
+        });
+        soundManager.playSelect();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [showToast]);
 
   // Zoom directly to Footprint / Order Flow view (shows ~14 candles for wide footprint cells)
   const handleZoomToFootprint = useCallback(() => {
@@ -586,6 +611,14 @@ export default function App() {
               footprintFilter={footprintFilter}
               onUpdateFootprintFilter={handleUpdateFootprintFilter}
             />
+
+            {/* Quick Hotkey Toast Notification HUD */}
+            {toastMessage && (
+              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-40 px-3.5 py-1.5 rounded-full bg-[#0d1422]/95 border border-sky-500/60 shadow-2xl backdrop-blur-md text-xs font-mono font-semibold text-sky-300 flex items-center gap-2 animate-in fade-in zoom-in-95 pointer-events-none">
+                <span className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                <span>{toastMessage}</span>
+              </div>
+            )}
           </div>
 
           {/* MACD Sub-Chart (Toggled via indicators) */}

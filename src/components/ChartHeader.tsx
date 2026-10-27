@@ -301,6 +301,25 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
           <span>Overview</span>
         </button>
 
+        {/* Candlestick Label Overview Toggle Button */}
+        <button
+          onClick={() => {
+            onToggleIndicator('candleOverview');
+            soundManager.playSelect();
+          }}
+          className={`flex items-center gap-1 px-2 py-1 rounded border text-[11px] font-medium transition-colors ${
+            indicators.candleOverview !== false
+              ? 'bg-[#1b2a41] text-sky-300 border-sky-500/50'
+              : 'bg-[#141b26] text-slate-400 hover:text-slate-200 border-[#222d3e]'
+          }`}
+          title="Toggle Candlestick Label Overview (Hotkey: \)"
+        >
+          <span>Labels</span>
+          <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-[#0d1420] text-sky-400 border border-[#202d42]">
+            \
+          </span>
+        </button>
+
         {/* Chart Style Selector */}
         <div className="relative" ref={chartTypeRef}>
           <button
@@ -562,6 +581,7 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                 Overlays & Subcharts
               </div>
               {[
+                { key: 'candleOverview', label: 'Candlestick Labels (OHLC)', hotkey: '\\', color: '#38bdf8' },
                 { key: 'ema9', label: 'EMA 9', color: '#eab308' },
                 { key: 'sma20', label: 'SMA 20', color: '#3b82f6' },
                 { key: 'sma200', label: 'SMA 200', color: '#a855f7' },
@@ -578,10 +598,15 @@ export const ChartHeader: React.FC<ChartHeaderProps> = ({
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full" style={{ backgroundColor: ind.color }} />
                     <span className="text-slate-200">{ind.label}</span>
+                    {(ind as any).hotkey && (
+                      <span className="text-[9px] font-mono px-1 py-0.2 rounded bg-[#0d1420] text-sky-400 border border-[#212d3f]">
+                        {(ind as any).hotkey}
+                      </span>
+                    )}
                   </div>
                   <input
                     type="checkbox"
-                    checked={!!indicators[ind.key as keyof IndicatorVisibility]}
+                    checked={indicators[ind.key as keyof IndicatorVisibility] !== false}
                     onChange={() => onToggleIndicator(ind.key as keyof IndicatorVisibility)}
                     className="accent-sky-500 rounded cursor-pointer"
                   />

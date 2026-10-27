@@ -148,6 +148,7 @@ export interface IndicatorVisibility {
   macd: boolean;
   barStats?: boolean;
   stackedImbalances?: boolean;
+  candleOverview?: boolean;
 }
 
 export interface VolumeProfileLevel {

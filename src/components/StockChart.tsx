@@ -2315,7 +2315,8 @@ export const StockChart: React.FC<StockChartProps> = ({
     ctx.fillStyle = isCustomScale ? '#38bdf8' : '#64748b';
     ctx.fillText('AUTO', plotWidth + rightAxisWidth / 2, timeAxisY + timeAxisHeight / 2);
 
-    // 13. Top Chart HUD Metrics & Exact Bar Label
+    // 13. Top Chart HUD Metrics & Exact Bar Label (Candlestick Label Overview)
+    const showCandleOverview = indicators.candleOverview !== false;
     const isHoveringPlot = hoverPos && hoverPos.x >= 0 && hoverPos.x < plotWidth && hoverPos.y >= 0 && hoverPos.y < plotHeight;
     const hoveredCandleIndex = isHoveringPlot
       ? Math.max(0, Math.min(visibleCandles.length - 1, Math.floor(hoverPos.x / candleWidth)))
@@ -2329,7 +2330,7 @@ export const StockChart: React.FC<StockChartProps> = ({
       ? startIndex + hoveredCandleIndex
       : candles.length - 1;
 
-    if (activeCandle) {
+    if (showCandleOverview && activeCandle) {
       const barChange = activeCandle.close - activeCandle.open;
       const barChangePct = activeCandle.open > 0 ? (barChange / activeCandle.open) * 100 : 0;
       const isBarUp = activeCandle.close >= activeCandle.open;
@@ -2628,6 +2629,12 @@ export const StockChart: React.FC<StockChartProps> = ({
         ctx.textBaseline = 'middle';
         ctx.fillText(activeCandle.close.toFixed(4), plotWidth + rightAxisWidth / 2, closeY);
       }
+    } else if (!showCandleOverview) {
+      ctx.fillStyle = 'rgba(148, 163, 184, 0.4)';
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('Candlestick Labels: Hidden [ Press \\ to show ]', 12, 10);
     }
 
     // 14. Helper tooltip overlay when dragging price or time scale

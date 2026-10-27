@@ -139,6 +139,23 @@ export const ChartTourModal: React.FC<ChartTourModalProps> = ({ isOpen, onClose 
               </p>
             </div>
           </div>
+
+          <div className="flex items-start gap-3 p-3 bg-[#131b27] rounded border border-[#1d293b]">
+            <CandlestickChart className="w-5 h-5 text-sky-400 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-slate-100 text-sm">Keyboard Hotkeys</div>
+              <div className="grid grid-cols-2 gap-2 mt-2 font-mono text-[11px]">
+                <div className="p-2 rounded bg-[#0b1018] border border-[#233147] flex items-center justify-between">
+                  <span className="text-slate-300 font-sans">Candlestick Labels</span>
+                  <span className="px-1.5 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800 font-bold">\</span>
+                </div>
+                <div className="p-2 rounded bg-[#0b1018] border border-[#233147] flex items-center justify-between">
+                  <span className="text-slate-300 font-sans">Toggle Screener</span>
+                  <span className="px-1.5 py-0.5 rounded bg-sky-950 text-sky-400 border border-sky-800 font-bold">Shift+S</span>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
