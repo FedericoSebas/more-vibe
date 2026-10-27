@@ -5,7 +5,8 @@ import {
   Info, 
   ChevronDown, 
   Search,
-  RefreshCw
+  RefreshCw,
+  PanelRightClose
 } from 'lucide-react';
 import { StockQuote } from '../types/stock';
 import { soundManager } from '../utils/sound';
@@ -20,6 +21,7 @@ interface WatchlistScannerProps {
   onChangeCategory: (category: string) => void;
   updatedTickers: Record<string, 'up' | 'down'>;
   onRefresh?: () => void;
+  onClose?: () => void;
 }
 
 type SortColumn = 'ticker' | 'volume' | 'm1Change' | 'm5Change' | 'm15Change' | 'h1Change' | 'h4Change' | 'changePercent' | 'openPercent';
@@ -33,7 +35,8 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
   activeCategory,
   onChangeCategory,
   updatedTickers,
-  onRefresh
+  onRefresh,
+  onClose
 }) => {
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState<SortColumn>('changePercent');
@@ -178,8 +181,8 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
           </button>
         </div>
 
-        {/* Right side: Customize Button */}
-        <div className="flex items-center gap-2">
+        {/* Right side: Customize Button & Close Screener Button */}
+        <div className="flex items-center gap-1.5">
           <button
             onClick={onOpenCustomize}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#161d2a] hover:bg-[#1e2738] border border-[#232d40] text-slate-300 hover:text-white text-[11px] font-medium transition-colors"
@@ -187,6 +190,15 @@ export const WatchlistScanner: React.FC<WatchlistScannerProps> = ({
             <SlidersHorizontal className="w-3 h-3 text-slate-400" />
             <span>Customize</span>
           </button>
+          {onClose && (
+            <button
+              onClick={onClose}
+              className="p-1 rounded hover:bg-[#1e2738] text-slate-400 hover:text-white transition-colors"
+              title="Hide Screener (Shift+S)"
+            >
+              <PanelRightClose className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 

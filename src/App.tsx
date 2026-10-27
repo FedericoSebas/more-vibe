@@ -23,6 +23,7 @@ import { StockOverviewModal } from './components/StockOverviewModal';
 import { ChartTourModal } from './components/ChartTourModal';
 import { CustomizeModal } from './components/CustomizeModal';
 import { Level2OrderBook } from './components/Level2OrderBook';
+import { RightSidebar } from './components/RightSidebar';
 
 export default function App() {
   const [stocks, setStocks] = useState<StockQuote[]>(INITIAL_STOCKS);
@@ -86,6 +87,7 @@ export default function App() {
   }, []);
 
   // Scanner filtering & modals
+  const [isScreenerOpen, setIsScreenerOpen] = useState<boolean>(true);
   const [activeCategory, setActiveCategory] = useState<string>('stocks');
   const [minVolume, setMinVolume] = useState<number>(0);
   const [minGain, setMinGain] = useState<number>(0);
@@ -93,6 +95,22 @@ export default function App() {
   const [isTourOpen, setIsTourOpen] = useState<boolean>(false);
   const [isOverviewOpen, setIsOverviewOpen] = useState<boolean>(false);
   const [isCustomizeOpen, setIsCustomizeOpen] = useState<boolean>(false);
+
+  // Keyboard shortcut: Shift+S to toggle Screener visibility
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+      if (e.key === 'S' && e.shiftKey) {
+        e.preventDefault();
+        setIsScreenerOpen(prev => !prev);
+        soundManager.playSelect();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Zoom directly to Footprint / Order Flow view (shows ~14 candles for wide footprint cells)
   const handleZoomToFootprint = useCallback(() => {
@@ -523,17 +541,46 @@ export default function App() {
           isLive={isLive}
         />
 
-        {/* Right Watchlist Scanner Panel (identical to screenshot layout) */}
-        <WatchlistScanner
-          stocks={visibleScannerStocks}
-          selectedTicker={selectedStock.ticker}
-          onSelectStock={handleSelectStock}
-          onToggleFavorite={handleToggleFavorite}
-          onOpenCustomize={() => setIsCustomizeOpen(true)}
+        {/* Right Watchlist Scanner Panel (collapsible, chart expands when hidden) */}
+        {isScreenerOpen && (
+          <WatchlistScanner
+            stocks={visibleScannerStocks}
+            selectedTicker={selectedStock.ticker}
+            onSelectStock={handleSelectStock}
+            onToggleFavorite={handleToggleFavorite}
+            onOpenCustomize={() => setIsCustomizeOpen(true)}
+            activeCategory={activeCategory}
+            onChangeCategory={setActiveCategory}
+            updatedTickers={updatedTickers}
+            onRefresh={loadRealScannerQuotes}
+            onClose={() => {
+              setIsScreenerOpen(false);
+              soundManager.playSelect();
+            }}
+          />
+        )}
+
+        {/* Right Side Bar with Screener Presets and Show/Hide Toggle */}
+        <RightSidebar
+          isScreenerOpen={isScreenerOpen}
+          onToggleScreener={() => {
+            setIsScreenerOpen(prev => !prev);
+            soundManager.playSelect();
+          }}
           activeCategory={activeCategory}
-          onChangeCategory={setActiveCategory}
-          updatedTickers={updatedTickers}
-          onRefresh={loadRealScannerQuotes}
+          onChangeCategory={(category) => {
+            setActiveCategory(category);
+            setIsScreenerOpen(true);
+            soundManager.playSelect();
+          }}
+          stocksCount={stocks.length}
+          isLevel2Open={isLevel2Open}
+          onToggleLevel2={() => {
+            setIsLevel2Open(prev => !prev);
+            soundManager.playSelect();
+          }}
+          onOpenOverview={() => setIsOverviewOpen(true)}
+          onOpenCustomize={() => setIsCustomizeOpen(true)}
         />
       </div>
 
